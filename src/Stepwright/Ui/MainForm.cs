@@ -72,16 +72,15 @@ public sealed class MainForm : Form
 
     private void BuildLayout()
     {
-        // The splitter position is applied once the control has a real size, because
-        // a distance wider than the default control width is rejected outright.
+        // The splitter sizes are applied in the load handler, once the control has a real
+        // width. A fresh split container is only as wide as its default size, and the
+        // limits have to fit inside that width.
         _split = new SplitContainer
         {
             Dock = DockStyle.Fill,
             SplitterWidth = 3,
             FixedPanel = FixedPanel.Panel1,
             BackColor = Theme.Border,
-            Panel1MinSize = 260,
-            Panel2MinSize = 420,
         };
 
         SplitContainer split = _split;
@@ -1634,8 +1633,10 @@ public sealed class MainForm : Form
         Theme.EnableDarkTitleBar(Handle);
         Theme.Apply(this);
 
-        if (_split is not null && _split.Width > 700)
+        if (_split is not null && _split.Width > 760)
         {
+            _split.Panel1MinSize = 260;
+            _split.Panel2MinSize = 420;
             _split.SplitterDistance = 380;
         }
         RegisterHotkeys();

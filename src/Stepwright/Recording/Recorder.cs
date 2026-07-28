@@ -393,7 +393,11 @@ public sealed class Recorder : IDisposable
         if (KeyNames.IsNotableCommandKey(e.VirtualKey))
         {
             FlushTyping();
-            string name = KeyNames.Describe(e.VirtualKey);
+
+            // Shift and Tab together is a different instruction from Tab on its own.
+            string name = e.Shift
+                ? KeyNames.DescribeCombination(false, false, true, false, e.VirtualKey)
+                : KeyNames.Describe(e.VirtualKey);
             Point cursor = ScreenCapture.CursorPosition();
             CapturedFrame frame = ScreenCapture.Grab(cursor, _settings.CaptureAllMonitors);
             _queue.Add(new KeyWork { Frame = frame, Point = cursor, Keys = name });
