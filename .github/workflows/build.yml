@@ -1,0 +1,67 @@
+name: Build Stepwright
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Restore
+        run: dotnet restore src/Stepwright/Stepwright.csproj
+
+      - name: Build
+        run: dotnet build src/Stepwright/Stepwright.csproj -c Release --no-restore
+
+      - name: Publish the standalone build
+        run: >
+          dotnet publish src/Stepwright/Stepwright.csproj
+          -c Release -r win-x64 --self-contained true
+          -p:PublishSingleFile=true
+          -p:IncludeNativeLibrariesForSelfExtract=true
+          -p:EnableCompressionInSingleFile=true
+          -p:DebugType=none
+          -o publish/standalone
+
+      - name: Publish the small build
+        run: >
+          dotnet publish src/Stepwright/Stepwright.csproj
+          -c Release -r win-x64 --self-contained false
+          -p:PublishSingleFile=true
+          -p:DebugType=none
+          -o publish/compact
+
+      - name: Name the outputs
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path artifacts | Out-Null
+          Copy-Item publish/standalone/Stepwright.exe artifacts/Stepwright.exe
+          Copy-Item publish/compact/Stepwright.exe artifacts/Stepwright-needs-dotnet8.exe
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Stepwright
+          path: artifacts/*.exe
+          retention-days: 30
+
+      - name: Attach the builds to the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*.exe
+          generate_release_notes: true
