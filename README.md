@@ -1,6 +1,6 @@
 # Stepwright
 
-A Windows tool that watches you do a task once and writes the guide for you.
+A tool for Windows and macOS that watches you do a task once and writes the guide for you.
 
 Click through the procedure. Stepwright captures every click, keystroke, shortcut, drag and
 scroll, takes a screenshot at the exact moment of each action, reads the real name of the
@@ -10,11 +10,16 @@ wording and export.
 It does what Scribe does, plus the parts Scribe puts behind a login, a subscription or a
 browser extension.
 
+There are two applications here, one per platform, sharing a file format rather than a code
+base. Nothing underneath is portable: the input hooks, the screen capture and the accessibility
+tree are different on each, and so are the interface toolkit and the drawing layer. What is
+shared is the `.stepwright` file, so a guide recorded on one opens on the other.
+
 ## What it gives you that Scribe does not
 
 | | Stepwright | Scribe |
 | --- | --- | --- |
-| Desktop applications, not just the browser | yes, every window on Windows | paid tier only |
+| Desktop applications, not just the browser | yes, every window on Windows and macOS | paid tier only |
 | Cost | free, no account | free tier is browser only and watermarked |
 | Where your screenshots go | nowhere, they stay on your machine | uploaded to their cloud |
 | PDF, Word and Markdown export | included | paid tier |
@@ -133,11 +138,32 @@ you chose, and nowhere else.
 
 ## Install
 
+### Windows
+
 Download `Stepwright.exe` from the latest release and run it. Nothing to install and no
 runtime needed, because the self contained build carries everything with it.
 
 `Stepwright.small.exe` in the same release is a few hundred kilobytes instead of sixty
 megabytes, for machines that already have the .NET 8 desktop runtime.
+
+### macOS
+
+Download `Stepwright-mac.zip`, unzip it, and move `Stepwright.app` to your Applications folder.
+It is a native app of under a megabyte, with nothing to install alongside it. Ventura or later.
+
+The first time you record, macOS asks for two permissions, and it will not let the app work
+without them:
+
+* **Accessibility**, which is what lets it see your clicks and keystrokes and read the name of
+  the control you used
+* **Screen Recording**, which is what lets it take the screenshots
+
+Stepwright asks for both and offers a button through to the right settings pane. macOS only
+shows each prompt once, so if you dismiss one, turn it on yourself under System Settings,
+Privacy and Security.
+
+Because the app is not signed by a developer Apple recognises, the first launch needs a right
+click then Open, rather than a double click. See the section below on that.
 
 ## The warning Windows shows
 
@@ -184,6 +210,15 @@ alongside the program. It does nothing at all for a stranger downloading the fil
 Choose "More info" then "Run anyway" the first time. The warning goes away by itself once
 enough people have run the same file, which for an internal tool may never happen.
 
+### What macOS shows instead
+
+macOS refuses to open an app from an unidentified developer on a double click. Right click the
+app and choose Open, and the dialog gains an Open button. That is a one time thing per machine.
+
+To remove it properly you need an Apple Developer account, ninety nine dollars a year, which
+lets you sign the app and send it to Apple for notarising. That is the only route, and it is
+per account rather than per app.
+
 ### One thing worth knowing
 
 A signature and a reputation are two different things. Signing tells Windows who made the file,
@@ -192,6 +227,19 @@ before, and only an extended validation or Trusted Signing certificate carries r
 the start. With an ordinary certificate the first few people still see a warning.
 
 ## Good to know
+
+### On macOS
+
+* Two permissions are required and the app will say so: Accessibility and Screen Recording.
+* The recorder bar is kept out of every screenshot by marking the panel as not for sharing,
+  which is the platform's own facility for exactly this.
+* macOS says when it has switched a slow event tap off, so the recorder switches it back on
+  rather than quietly recording nothing.
+* Function key shortcuts are F9 to start or pause, F10 to finish and F8 to capture, the same as
+  on Windows. If your keyboard sends media keys instead, hold Fn, or change the behaviour under
+  Keyboard in System Settings.
+
+### On Windows
 
 * Recording another program that runs as administrator needs Stepwright to run as
   administrator too. Windows blocks input hooks from a process with fewer privileges, and it
@@ -203,15 +251,29 @@ the start. With an ordinary certificate the first few people still see a warning
 
 ## Build it yourself
 
+### Windows
+
 ```bash
 dotnet publish src/Stepwright -c Release -r win-x64 --self-contained true \
   -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
 ```
 
 The project targets `net8.0-windows`. It cross compiles from macOS or Linux with
-`-p:EnableWindowsTargeting=true`, which is what the local build script does.
+`-p:EnableWindowsTargeting=true`, which is what `build.sh` at the root does.
+
+### macOS
+
+```bash
+mac/Stepwright/build.sh
+```
+
+Swift and the command line tools are all it needs, with no Xcode project involved. The script
+compiles the sources and assembles `Stepwright.app` around them, then signs it so macOS gives
+it a stable identity for the permission prompts.
 
 ## How it is put together
+
+The Windows app:
 
 ```
 src/Stepwright
@@ -227,9 +289,27 @@ src/Stepwright
   Ui/          the window, the editor and the floating recorder bar
 ```
 
-The recorder never does slow work on the thread that owns the input hook. A hook callback only
-takes the screen grab, then hands the rest to a worker queue, so Windows never drops the hook
-for being late.
+The macOS app:
+
+```
+mac/Stepwright/Sources
+  Platform.swift    permissions, screen capture and picture files
+  Inspector.swift   the accessibility lookup that names what was clicked
+  Recorder.swift    the event tap and the state machine on top of it
+  Renderer.swift    crop, zoom, click marker, blur, arrows and labels
+  Animation.swift   the per step movement and the whole guide reel
+  Exporters.swift   web page, markdown and the guide file format
+  PdfExport.swift   the document, drawn by the platform
+  Assistant.swift   the optional writing pass
+  Views.swift       the preview, the step rows and the floating bar
+  MainWindow.swift  the editor
+```
+
+Both recorders follow the same discipline: the callback that sees an event does one thing, take
+a single screen grab, because that has to happen before the application redraws itself.
+Everything slow, the accessibility lookup and writing the picture out, happens on a worker
+behind a queue. Windows drops a hook that takes too long without saying so, which is why the
+rule matters there; macOS says when it has done it, so the tap is simply switched back on.
 
 The PDF and animation writers under `Export/Pdf` and `Export/Gif` carry no dependency on the
 platform or on any other library, and that is deliberate rather than a point of pride.
