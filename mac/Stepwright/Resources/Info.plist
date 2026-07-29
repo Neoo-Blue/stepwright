@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>Stepwright</string>
+    <key>CFBundleDisplayName</key>
+    <string>Stepwright</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.stepwright.app</string>
+    <key>CFBundleExecutable</key>
+    <string>Stepwright</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.3.0</string>
+    <key>CFBundleVersion</key>
+    <string>1.3.0</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>13.0</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>NSPrincipalClass</key>
+    <string>NSApplication</string>
+    <key>NSHumanReadableCopyright</key>
+    <string>Stepwright</string>
+
+    <!-- Shown by macOS when it asks the person to allow each of these. -->
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Stepwright needs this to read the name of the control you click, so a step can say what you actually pressed.</string>
+    <key>NSAccessibilityUsageDescription</key>
+    <string>Stepwright watches your clicks and keystrokes so it can write the steps for you, and reads the name of each control you use.</string>
+    <key>NSScreenCaptureUsageDescription</key>
+    <string>Stepwright takes a screenshot at the moment of each action so your guide has pictures.</string>
+</dict>
+</plist>

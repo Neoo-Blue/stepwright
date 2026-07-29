@@ -165,3 +165,37 @@ jobs:
         with:
           files: artifacts/*.exe
           generate_release_notes: true
+
+  mac:
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the app
+        run: mac/Stepwright/build.sh "$RUNNER_TEMP/macbuild"
+
+      - name: Check the bundle
+        run: |
+          APP="$RUNNER_TEMP/macbuild/Stepwright.app"
+          test -x "$APP/Contents/MacOS/Stepwright" || { echo "no executable in the bundle"; exit 1; }
+          test -f "$APP/Contents/Info.plist" || { echo "no plist in the bundle"; exit 1; }
+          file "$APP/Contents/MacOS/Stepwright"
+          du -sh "$APP"
+
+      - name: Package it
+        run: |
+          cd "$RUNNER_TEMP/macbuild"
+          ditto -c -k --keepParent Stepwright.app "$GITHUB_WORKSPACE/Stepwright-mac.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Stepwright-mac
+          path: Stepwright-mac.zip
+          retention-days: 30
+
+      - name: Attach the app to the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: Stepwright-mac.zip
