@@ -148,22 +148,36 @@ megabytes, for machines that already have the .NET 8 desktop runtime.
 
 ### macOS
 
-Download `Stepwright-mac.zip`, unzip it, and move `Stepwright.app` to your Applications folder.
-It is a native app of under a megabyte, with nothing to install alongside it. Ventura or later.
+Download `Stepwright.dmg`, open it, and **drag Stepwright to the Applications folder** shown
+beside it. Then open it from Applications. It is a native app of under a megabyte, with nothing
+to install alongside it. Ventura or later.
 
-The first time you record, macOS asks for two permissions, and it will not let the app work
-without them:
-
-* **Accessibility**, which is what lets it see your clicks and keystrokes and read the name of
-  the control you used
-* **Screen Recording**, which is what lets it take the screenshots
-
-Stepwright asks for both and offers a button through to the right settings pane. macOS only
-shows each prompt once, so if you dismiss one, turn it on yourself under System Settings,
-Privacy and Security.
+Moving it is not a formality. macOS runs an app straight from a download at a throwaway path
+that changes on every launch, so any permission you grant is attached to a path that will not
+exist next time. That is why permissions can appear to be ignored no matter how many times you
+grant them. From Applications they stay granted. Stepwright notices when it is in the wrong
+place and offers to move itself.
 
 Because the app is not signed by a developer Apple recognises, the first launch needs a right
 click then Open, rather than a double click. See the section below on that.
+
+`Stepwright-mac.zip` is the same app without the disk image, for anyone who prefers it.
+
+### The three permissions macOS asks for
+
+Stepwright cannot record until all three are on. It shows them in a window that updates itself
+as you grant each one, with a button through to the right settings pane.
+
+| Permission | What it is for |
+| --- | --- |
+| Accessibility | Reads the name of the control you click, so a step can say what you actually pressed |
+| Input Monitoring | Sees your clicks and keystrokes, which is what the steps are made from |
+| Screen Recording | Takes the screenshot at the moment of each action |
+
+**Input Monitoring and Screen Recording only take effect after the app is opened again.** macOS
+reads them once when a process starts. Turning the switch on while Stepwright is running changes
+nothing until it restarts, which is why it looks like the grant did not work. There is a Quit
+and open again button in the permissions window that does it for you.
 
 ## The warning Windows shows
 
@@ -209,6 +223,19 @@ alongside the program. It does nothing at all for a stranger downloading the fil
 
 Choose "More info" then "Run anyway" the first time. The warning goes away by itself once
 enough people have run the same file, which for an internal tool may never happen.
+
+### If a permission will not stick
+
+In order:
+
+1. Is the app in your Applications folder? If it is anywhere else, especially still in
+   Downloads, macOS may be running it from a temporary path and forgetting every grant. The
+   permissions window says so when this is happening.
+2. Did you open the app again after granting? Input Monitoring and Screen Recording are only
+   read at startup.
+3. Is there an old entry for Stepwright in the list with its switch on? Remove it with the
+   minus button and add the current app again. An unsigned app is identified partly by its
+   contents, so an entry left over from a previous version can refer to something else.
 
 ### What macOS shows instead
 
