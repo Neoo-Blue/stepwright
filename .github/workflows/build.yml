@@ -15,6 +15,12 @@ jobs:
   build:
     runs-on: windows-latest
 
+    # Lifted to the job so the signing step can ask whether a certificate exists.
+    # A step condition cannot read the secrets context directly.
+    env:
+      SIGNING_CERT_BASE64: ${{ secrets.SIGNING_CERT_BASE64 }}
+      SIGNING_CERT_PASSWORD: ${{ secrets.SIGNING_CERT_PASSWORD }}
+
     steps:
       - uses: actions/checkout@v4
 
@@ -86,14 +92,11 @@ jobs:
       # Runs only once a certificate has been added to the repository secrets. Without one
       # the builds are still produced, they are simply unsigned.
       - name: Sign the builds
-        if: ${{ secrets.SIGNING_CERT_BASE64 != '' }}
+        if: env.SIGNING_CERT_BASE64 != ''
         shell: pwsh
-        env:
-          CERT: ${{ secrets.SIGNING_CERT_BASE64 }}
-          CERT_PASSWORD: ${{ secrets.SIGNING_CERT_PASSWORD }}
         run: |
           $pfx = Join-Path $env:RUNNER_TEMP "signing.pfx"
-          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:CERT))
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:SIGNING_CERT_BASE64))
 
           $signtool = (Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" |
             Sort-Object FullName)[-1].FullName
@@ -101,7 +104,7 @@ jobs:
 
           foreach ($file in Get-ChildItem artifacts/*.exe) {
             & $signtool sign /fd SHA256 /td SHA256 /tr http://timestamp.digicert.com `
-              /f $pfx /p $env:CERT_PASSWORD $file.FullName
+              /f $pfx /p $env:SIGNING_CERT_PASSWORD $file.FullName
             if ($LASTEXITCODE -ne 0) { throw "signing failed for $($file.Name)" }
           }
 
