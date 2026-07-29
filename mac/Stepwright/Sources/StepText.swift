@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 /// Turns an interaction into the sentence a reader will follow.
