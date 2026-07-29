@@ -314,8 +314,8 @@ enum GuideAnimator {
 
         sentence.draw(in: CGRect(
             x: 56,
-            y: height - pictureHeight - 52,
-            width: Double(width - 130),
+            y: CGFloat(height - pictureHeight - 52),
+            width: CGFloat(width - 130),
             height: 40))
 
         let counter = NSAttributedString(string: "\(number) of \(total)", attributes: [
@@ -324,7 +324,9 @@ enum GuideAnimator {
         ])
 
         let counterSize = counter.size()
-        counter.draw(at: CGPoint(x: Double(width) - counterSize.width - 18, y: Double(height - pictureHeight - 40)))
+        counter.draw(at: CGPoint(
+            x: CGFloat(width) - counterSize.width - 18,
+            y: CGFloat(height - pictureHeight - 40)))
 
         NSGraphicsContext.current = previous
 
