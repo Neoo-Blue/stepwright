@@ -65,6 +65,12 @@ public sealed class AppSettings
     /// <summary>Ask the assistant to add a short note under a step where one genuinely helps.</summary>
     public bool AiWriteNotes { get; set; } = true;
 
+    /// <summary>How lively the movement in an animated step is: gentle, normal or quick.</summary>
+    public string GifMotion { get; set; } = "Normal";
+
+    /// <summary>Widest an animation is written, in pixels. Smaller keeps the file light.</summary>
+    public int GifWidth { get; set; } = 760;
+
     public string LibraryFolder { get; set; } = DefaultLibraryFolder;
 
     [JsonIgnore]

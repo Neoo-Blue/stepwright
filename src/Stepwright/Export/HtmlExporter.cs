@@ -15,6 +15,9 @@ public sealed class HtmlOptions
     public bool EmbedImages { get; set; } = true;
 
     public bool UseJpeg { get; set; }
+
+    /// <summary>Whether a step marked as animated is written as one.</summary>
+    public bool AllowAnimation { get; set; } = true;
     public int MaxImageWidth { get; set; } = 1400;
     public long JpegQuality { get; set; } = 82;
     public string? ImageFolder { get; set; }
@@ -125,17 +128,22 @@ public static class HtmlExporter
             return null;
         }
 
-        byte[]? bytes = options.UseJpeg
+        // An animated step is written as an animation, since a web page can show one.
+        byte[]? animation = step.Animate && options.AllowAnimation
+            ? GuideRenderer.RenderAnimation(guide, step, settings)
+            : null;
+
+        byte[]? bytes = animation ?? (options.UseJpeg
             ? GuideRenderer.RenderJpeg(guide, step, settings, options.MaxImageWidth, options.JpegQuality)
-            : GuideRenderer.RenderPng(guide, step, settings, options.MaxImageWidth);
+            : GuideRenderer.RenderPng(guide, step, settings, options.MaxImageWidth));
 
         if (bytes is null)
         {
             return null;
         }
 
-        string extension = options.UseJpeg ? ".jpg" : ".png";
-        string mime = options.UseJpeg ? "image/jpeg" : "image/png";
+        string extension = animation is not null ? ".gif" : options.UseJpeg ? ".jpg" : ".png";
+        string mime = animation is not null ? "image/gif" : options.UseJpeg ? "image/jpeg" : "image/png";
 
         if (options.EmbedImages || string.IsNullOrEmpty(options.ImageFolder))
         {

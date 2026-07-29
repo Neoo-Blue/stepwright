@@ -109,6 +109,9 @@ public sealed class Step
 
     public RectI? Crop { get; set; }
 
+    /// <summary>Export this step as a short animation that zooms to the control.</summary>
+    public bool Animate { get; set; }
+
     public bool ShowClickMarker { get; set; } = true;
     public bool ShowElementOutline { get; set; } = true;
     public bool AutoZoom { get; set; } = true;
@@ -142,6 +145,7 @@ public sealed class Step
             ElementArea = ElementArea,
             WindowArea = WindowArea,
             Crop = Crop,
+            Animate = Animate,
             ShowClickMarker = ShowClickMarker,
             ShowElementOutline = ShowElementOutline,
             AutoZoom = AutoZoom,

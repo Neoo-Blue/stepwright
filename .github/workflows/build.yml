@@ -20,6 +20,8 @@ jobs:
     env:
       SIGNING_CERT_BASE64: ${{ secrets.SIGNING_CERT_BASE64 }}
       SIGNING_CERT_PASSWORD: ${{ secrets.SIGNING_CERT_PASSWORD }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      TRUSTED_SIGNING_ENDPOINT: ${{ secrets.TRUSTED_SIGNING_ENDPOINT }}
 
     steps:
       - uses: actions/checkout@v4
@@ -64,6 +66,25 @@ jobs:
           if ($tail -notmatch "%%EOF") { throw "the file is not terminated: $tail" }
           Write-Host "document header and trailer are correct"
 
+      - name: Check the animation writer
+        shell: pwsh
+        run: |
+          $out = Join-Path $env:RUNNER_TEMP "probe.gif"
+          dotnet run --project tools/GifProbe/GifProbe.csproj -c Release -- $out
+
+          if (-not (Test-Path $out)) { throw "no animation was produced" }
+          $bytes = [System.IO.File]::ReadAllBytes($out)
+          Write-Host "animation size $($bytes.Length) bytes"
+
+          $head = [System.Text.Encoding]::ASCII.GetString($bytes[0..5])
+          if ($head -ne "GIF89a") { throw "wrong file header: $head" }
+          if ($bytes[$bytes.Length - 1] -ne 0x3B) { throw "the file is not terminated" }
+
+          # Every viewer needs the looping marker, so its absence is a real failure.
+          $text = [System.Text.Encoding]::ASCII.GetString($bytes[0..600])
+          if ($text -notmatch "NETSCAPE2.0") { throw "the looping marker is missing" }
+          Write-Host "animation header, looping marker and trailer are correct"
+
       - name: Publish the standalone build
         run: >
           dotnet publish src/Stepwright/Stepwright.csproj
@@ -89,8 +110,26 @@ jobs:
           Copy-Item publish/standalone/Stepwright.exe artifacts/Stepwright.exe
           Copy-Item publish/compact/Stepwright.exe artifacts/Stepwright.small.exe
 
-      # Runs only once a certificate has been added to the repository secrets. Without one
-      # the builds are still produced, they are simply unsigned.
+      # Microsoft issues the certificate and keeps the key, so there is no file to look
+      # after. Runs only once the four Azure values are in the repository secrets.
+      - name: Sign with Azure Trusted Signing
+        if: env.AZURE_TENANT_ID != '' && env.TRUSTED_SIGNING_ENDPOINT != ''
+        uses: azure/trusted-signing-action@v0
+        with:
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ secrets.TRUSTED_SIGNING_ENDPOINT }}
+          trusted-signing-account-name: ${{ secrets.TRUSTED_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ secrets.TRUSTED_SIGNING_PROFILE }}
+          files-folder: artifacts
+          files-folder-filter: exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      # The other route: a certificate file you hold yourself. Without one the builds are
+      # still produced, they are simply unsigned.
       - name: Sign the builds
         if: env.SIGNING_CERT_BASE64 != ''
         shell: pwsh

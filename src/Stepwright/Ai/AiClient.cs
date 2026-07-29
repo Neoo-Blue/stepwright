@@ -240,6 +240,110 @@ public static class AiClient
         return string.Empty;
     }
 
+    // ------------------------------------------------------------------ model list
+
+    /// <summary>
+    /// Asks the service which models the key can actually use, so the person can pick one
+    /// from a list instead of typing a name and hoping.
+    /// </summary>
+    public static async Task<IReadOnlyList<string>> ListModelsAsync(AppSettings settings, CancellationToken token)
+    {
+        string provider = settings.AiProvider?.ToLowerInvariant() ?? AiProviders.OpenAi;
+        string key = settings.GetAiKey();
+        string baseUrl = (settings.AiBaseUrl ?? string.Empty).TrimEnd('/');
+
+        if (string.IsNullOrWhiteSpace(baseUrl))
+        {
+            throw new InvalidOperationException("There is no address to ask. Fill in the address first.");
+        }
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, ModelsUrl(provider, baseUrl));
+
+        switch (provider)
+        {
+            case AiProviders.Anthropic:
+                if (!string.IsNullOrEmpty(key))
+                {
+                    request.Headers.Add("x-api-key", key);
+                }
+
+                request.Headers.Add("anthropic-version", "2023-06-01");
+                break;
+
+            case AiProviders.Gemini:
+                if (!string.IsNullOrEmpty(key))
+                {
+                    request.Headers.Add("x-goog-api-key", key);
+                }
+
+                break;
+
+            default:
+                if (!string.IsNullOrEmpty(key))
+                {
+                    request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
+                }
+
+                break;
+        }
+
+        JsonNode reply = await SendAsync(request, token).ConfigureAwait(false);
+        return ReadModels(provider, reply);
+    }
+
+    private static string ModelsUrl(string provider, string baseUrl) => provider switch
+    {
+        AiProviders.Anthropic => baseUrl.EndsWith("/v1", StringComparison.OrdinalIgnoreCase)
+            ? baseUrl + "/models?limit=100"
+            : baseUrl + "/v1/models?limit=100",
+        AiProviders.Gemini => (baseUrl.Contains("/v1", StringComparison.OrdinalIgnoreCase)
+            ? baseUrl
+            : baseUrl + "/v1beta") + "/models?pageSize=200",
+        _ => baseUrl + "/models",
+    };
+
+    private static IReadOnlyList<string> ReadModels(string provider, JsonNode reply)
+    {
+        var names = new List<string>();
+
+        if (provider == AiProviders.Gemini)
+        {
+            foreach (JsonNode? model in reply["models"] as JsonArray ?? new JsonArray())
+            {
+                string name = model?["name"]?.GetValue<string>() ?? string.Empty;
+
+                // Only the ones that can answer a prompt are of any use here.
+                bool canGenerate = model?["supportedGenerationMethods"] is not JsonArray methods
+                    || methods.Any(m => m?.GetValue<string>() == "generateContent");
+
+                if (canGenerate && name.StartsWith("models/", StringComparison.Ordinal))
+                {
+                    names.Add(name["models/".Length..]);
+                }
+            }
+        }
+        else
+        {
+            foreach (JsonNode? model in reply["data"] as JsonArray ?? new JsonArray())
+            {
+                string id = model?["id"]?.GetValue<string>() ?? string.Empty;
+                if (!string.IsNullOrEmpty(id))
+                {
+                    names.Add(id);
+                }
+            }
+        }
+
+        // Anything that cannot hold a conversation is noise in a list you pick from.
+        string[] unrelated = { "whisper", "tts", "dall-e", "embedding", "moderation", "audio", "realtime", "image" };
+
+        return names
+            .Where(n => !unrelated.Any(bad => n.Contains(bad, StringComparison.OrdinalIgnoreCase)))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
     // ------------------------------------------------------------------ shared
 
     private static StringContent Json(JsonNode body) =>

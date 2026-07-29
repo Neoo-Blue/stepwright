@@ -325,17 +325,17 @@ public sealed class ThemeRenderer : ToolStripProfessionalRenderer
 
     protected override void OnRenderButtonBackground(ToolStripItemRenderEventArgs e)
     {
-        DrawItemBackground(e);
+        PaintItemSurface(e);
     }
 
     protected override void OnRenderDropDownButtonBackground(ToolStripItemRenderEventArgs e)
     {
-        DrawItemBackground(e);
+        PaintItemSurface(e);
     }
 
     protected override void OnRenderSplitButtonBackground(ToolStripItemRenderEventArgs e)
     {
-        DrawItemBackground(e);
+        PaintItemSurface(e);
     }
 
     protected override void OnRenderMenuItemBackground(ToolStripItemRenderEventArgs e)
@@ -356,7 +356,7 @@ public sealed class ThemeRenderer : ToolStripProfessionalRenderer
     /// Every clickable item gets the same rounded highlight, and a checked one keeps a soft
     /// accent fill so the active tool is obvious at a glance.
     /// </summary>
-    private static void DrawItemBackground(ToolStripItemRenderEventArgs e)
+    private static void PaintItemSurface(ToolStripItemRenderEventArgs e)
     {
         if (e.Item is null)
         {

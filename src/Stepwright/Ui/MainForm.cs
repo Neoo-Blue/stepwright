@@ -33,6 +33,7 @@ public sealed class MainForm : Form
 
     private readonly List<ToolStripButton> _toolButtons = new();
     private readonly List<ToolStripButton> _variantButtons = new();
+    private readonly ToolStripButton _animateButton = new();
     private CropVariant _lastVariant = CropVariant.Focus;
     private int _hoverIndex = -1;
     private readonly ToolStripMenuItem _markerToggle = new();
@@ -165,6 +166,7 @@ public sealed class MainForm : Form
         _exportButton.DropDownItems.Add(Item("Markdown with an images folder", (_, _) => ExportMarkdown()));
         _exportButton.DropDownItems.Add(Item("Word document", (_, _) => ExportDocx()));
         _exportButton.DropDownItems.Add(Item("PDF", (_, _) => ExportPdf()));
+        _exportButton.DropDownItems.Add(Item("The whole guide as one animation", (_, _) => ExportReel()));
         _exportButton.DropDownItems.Add(new ToolStripSeparator());
         _exportButton.DropDownItems.Add(Item("Copy for pasting into a knowledge base", (_, _) => CopyRich()));
         _exportButton.DropDownItems.Add(Item("Copy the HTML source", (_, _) => CopyHtmlSource()));
@@ -369,6 +371,12 @@ public sealed class MainForm : Form
         AddVariant(strip, "Focus", CropVariant.Focus, "Around the control, with room to see where it sits");
         AddVariant(strip, "Close", CropVariant.Close, "Tight on the control");
 
+        _animateButton.Text = "Animate";
+        _animateButton.ToolTipText =
+            "Export this step as a short animation that starts wide and settles on the control";
+        _animateButton.Click += (_, _) => ToggleAnimation();
+        strip.Items.Add(_animateButton);
+
         strip.Items.Add(new ToolStripSeparator());
 
         AddTool(strip, "Select", CanvasTool.Select, "Click a callout to remove it");
@@ -420,6 +428,10 @@ public sealed class MainForm : Form
         more.DropDownItems.Add(new ToolStripSeparator());
         more.DropDownItems.Add(Item("Clear every callout on this step", (_, _) => ClearAnnotations()));
         more.DropDownItems.Add(Item("Apply this framing to every step", (_, _) => ApplyFramingToAll()));
+        more.DropDownItems.Add(new ToolStripSeparator());
+        more.DropDownItems.Add(Item("Animate every step that can be", (_, _) => AnimateAll()));
+        more.DropDownItems.Add(Item("Preview this animation", (_, _) => PreviewAnimation()));
+        more.DropDownItems.Add(Item("Save this animation as a file", (_, _) => SaveAnimation()));
 
         strip.Items.Add(more);
 
@@ -504,6 +516,146 @@ public sealed class MainForm : Form
         RefreshPreview();
         _list.Invalidate();
         Status($"Every step now uses the {_lastVariant.ToString().ToLowerInvariant()} framing.");
+    }
+
+    /// <summary>
+    /// Marks a step to be exported as a short animation. There is nothing to set up: the
+    /// movement is worked out from where the click landed and which control was used.
+    /// </summary>
+    private void ToggleAnimation()
+    {
+        if (SelectedStep is not { } step || !StepAnimator.CanAnimate(step))
+        {
+            return;
+        }
+
+        step.Animate = !step.Animate;
+        _animateButton.Checked = step.Animate;
+        MarkDirty();
+        _list.Invalidate();
+
+        Status(step.Animate
+            ? "This step will export as an animation. Web pages and Markdown show it; a document uses the still picture."
+            : "This step will export as a still picture.");
+    }
+
+    private void AnimateAll()
+    {
+        int count = 0;
+        foreach (Step step in _guide.Steps.Where(StepAnimator.CanAnimate))
+        {
+            step.Animate = true;
+            count++;
+        }
+
+        if (count == 0)
+        {
+            Status("None of these steps has a click to move towards.");
+            return;
+        }
+
+        MarkDirty();
+        LoadSelectedStep();
+        _list.Invalidate();
+        Status($"{count} steps will export as animations.");
+    }
+
+    private async void PreviewAnimation()
+    {
+        byte[]? animation = await BuildAnimationAsync().ConfigureAwait(true);
+        if (animation is null)
+        {
+            return;
+        }
+
+        try
+        {
+            // Written beside the working files and opened with whatever shows pictures,
+            // because the editor itself deliberately keeps showing the still frame.
+            string path = Path.Combine(Path.GetTempPath(), "stepwright-preview.gif");
+            File.WriteAllBytes(path, animation);
+            OpenInShell(path);
+            Status("Opened the animation in your picture viewer.");
+        }
+        catch (Exception error)
+        {
+            Warn("The animation could not be opened. " + error.Message);
+        }
+    }
+
+    private async void SaveAnimation()
+    {
+        byte[]? animation = await BuildAnimationAsync().ConfigureAwait(true);
+        if (animation is null)
+        {
+            return;
+        }
+
+        using var dialog = new SaveFileDialog
+        {
+            Filter = "Animation (*.gif)|*.gif",
+            FileName = GuideStore.SuggestFileName(_guide) + " step.gif",
+            InitialDirectory = EnsureLibraryFolder(),
+        };
+
+        if (dialog.ShowDialog(this) != DialogResult.OK)
+        {
+            return;
+        }
+
+        try
+        {
+            File.WriteAllBytes(dialog.FileName, animation);
+            Status("Saved to " + dialog.FileName);
+        }
+        catch (Exception error)
+        {
+            Warn("The animation could not be saved. " + error.Message);
+        }
+    }
+
+    private async Task<byte[]?> BuildAnimationAsync()
+    {
+        if (SelectedStep is not { } step)
+        {
+            return null;
+        }
+
+        if (!StepAnimator.CanAnimate(step))
+        {
+            Warn("This step has no click to move towards, so there is nothing to animate.");
+            return null;
+        }
+
+        Cursor = Cursors.WaitCursor;
+        Status("Building the animation...");
+
+        try
+        {
+            Guide guide = _guide;
+            AppSettings settings = _settings;
+
+            byte[]? animation = await Task
+                .Run(() => GuideRenderer.RenderAnimation(guide, step, settings))
+                .ConfigureAwait(true);
+
+            if (animation is null)
+            {
+                Warn("The animation could not be built for this step.");
+            }
+
+            return animation;
+        }
+        catch (Exception error)
+        {
+            Warn("The animation could not be built. " + error.Message);
+            return null;
+        }
+        finally
+        {
+            Cursor = Cursors.Default;
+            Status("Ready.");
+        }
     }
 
     /// <summary>Reads the size of the untouched screenshot behind a step.</summary>
@@ -906,7 +1058,7 @@ public sealed class MainForm : Form
 
         // A quiet line at the foot of the card saying what kind of action this was.
         string kind = Describe(step.Kind);
-        string trailer = step.Skip ? "hidden" : kind;
+        string trailer = step.Skip ? "hidden" : step.Animate ? kind + "   animated" : kind;
 
         using var trailerInk = new SolidBrush(Theme.Muted);
         graphics.DrawString(
@@ -1075,6 +1227,10 @@ public sealed class MainForm : Form
         {
             button.Enabled = hasImage;
         }
+
+        bool canAnimate = step is not null && StepAnimator.CanAnimate(step);
+        _animateButton.Enabled = canAnimate;
+        _animateButton.Checked = canAnimate && step!.Animate;
 
         ShowVariantChoice(step is null ? null : CurrentVariant(step));
 
@@ -1825,6 +1981,47 @@ public sealed class MainForm : Form
         {
             PdfExporter.Export(_guide, _settings, dialog.FileName);
             return dialog.FileName;
+        });
+    }
+
+    /// <summary>
+    /// The whole guide as a single animation: every step in order, held long enough to read.
+    /// Different from the per step animation, which zooms in on one action.
+    /// </summary>
+    private void ExportReel()
+    {
+        if (!_guide.Visible.Any(s => s.HasImage))
+        {
+            Warn("There are no screenshots to animate yet.");
+            return;
+        }
+
+        using var dialog = new SaveFileDialog
+        {
+            Filter = "Animation (*.gif)|*.gif",
+            FileName = GuideStore.SuggestFileName(_guide) + ".gif",
+            InitialDirectory = EnsureLibraryFolder(),
+        };
+
+        if (dialog.ShowDialog(this) != DialogResult.OK)
+        {
+            return;
+        }
+
+        Guide guide = _guide;
+        AppSettings settings = _settings;
+        string path = dialog.FileName;
+
+        RunExport(() =>
+        {
+            byte[]? reel = GuideAnimator.Build(guide, settings, null, Math.Max(640, settings.GifWidth));
+            if (reel is null)
+            {
+                throw new InvalidOperationException("There was nothing to animate.");
+            }
+
+            File.WriteAllBytes(path, reel);
+            return path;
         });
     }
 

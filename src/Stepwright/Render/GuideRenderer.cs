@@ -64,6 +64,31 @@ public static class GuideRenderer
     public static Bitmap? Render(Guide guide, Step step, AppSettings settings, int maxWidth = 1600) =>
         RenderDetailed(guide, step, settings, maxWidth)?.Image;
 
+    /// <summary>
+    /// The animated version of a step, or nothing when there is no sensible movement to make.
+    /// </summary>
+    public static byte[]? RenderAnimation(Guide guide, Step step, AppSettings settings)
+    {
+        if (!StepAnimator.CanAnimate(step))
+        {
+            return null;
+        }
+
+        GifMotion motion = Enum.TryParse(settings.GifMotion, ignoreCase: true, out GifMotion parsed)
+            ? parsed
+            : GifMotion.Normal;
+
+        try
+        {
+            return StepAnimator.Build(guide, step, settings, motion, Math.Clamp(settings.GifWidth, 320, 1400));
+        }
+        catch
+        {
+            // A step that cannot be animated simply falls back to its still picture.
+            return null;
+        }
+    }
+
     public static byte[]? RenderPng(Guide guide, Step step, AppSettings settings, int maxWidth = 1600)
     {
         using Bitmap? bitmap = Render(guide, step, settings, maxWidth);

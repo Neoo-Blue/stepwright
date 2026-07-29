@@ -60,11 +60,13 @@ public static class MarkdownExporter
 
             if (writeImages && step.HasImage)
             {
-                byte[]? bytes = GuideRenderer.RenderPng(guide, step, settings, maxImageWidth);
+                byte[]? animation = step.Animate ? GuideRenderer.RenderAnimation(guide, step, settings) : null;
+                byte[]? bytes = animation ?? GuideRenderer.RenderPng(guide, step, settings, maxImageWidth);
+
                 if (bytes is not null)
                 {
                     Directory.CreateDirectory(imageFolder);
-                    string name = $"step{number:D3}.png";
+                    string name = $"step{number:D3}" + (animation is not null ? ".gif" : ".png");
                     File.WriteAllBytes(Path.Combine(imageFolder, name), bytes);
                     string relative = Uri.EscapeDataString(folderName) + "/" + name;
                     text.AppendLine($"![Step {number}]({relative})");

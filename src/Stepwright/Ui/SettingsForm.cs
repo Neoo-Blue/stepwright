@@ -4,6 +4,11 @@ using Stepwright.Render;
 
 namespace Stepwright.Ui;
 
+/// <summary>
+/// Every page is a single column table that sizes itself to its contents, so a caption can
+/// never be clipped and nothing depends on where a pixel happened to land. The pages scroll
+/// when the display font is large enough to need it.
+/// </summary>
 public sealed class SettingsForm : Form
 {
     private readonly AppSettings _settings;
@@ -26,6 +31,8 @@ public sealed class SettingsForm : Form
     private readonly Button _markerColor = new();
     private readonly CheckBox _headings = new();
     private readonly CheckBox _darkTheme = new();
+    private readonly ComboBox _gifMotion = new();
+    private readonly NumericUpDown _gifWidth = new();
 
     private readonly ComboBox _keyStart = new();
     private readonly ComboBox _keyStop = new();
@@ -35,10 +42,11 @@ public sealed class SettingsForm : Form
     private readonly CheckBox _aiEnabled = new();
     private readonly ComboBox _aiProvider = new();
     private readonly TextBox _aiBaseUrl = new();
-    private readonly TextBox _aiModel = new();
+    private readonly ComboBox _aiModel = new();
     private readonly TextBox _aiKey = new();
     private readonly CheckBox _aiPictures = new();
     private readonly CheckBox _aiNotes = new();
+    private readonly Button _aiModels = new();
     private readonly Button _aiTest = new();
     private readonly Label _aiResult = new();
     private readonly LinkLabel _aiKeyLink = new();
@@ -53,128 +61,149 @@ public sealed class SettingsForm : Form
         _chosenMarker = StepRenderer.Parse(settings.MarkerColor, Color.OrangeRed);
 
         Text = "Stepwright settings";
-        FormBorderStyle = FormBorderStyle.FixedDialog;
-        MaximizeBox = false;
+        FormBorderStyle = FormBorderStyle.Sizable;
         MinimizeBox = false;
+        MaximizeBox = false;
+        ShowInTaskbar = false;
         StartPosition = FormStartPosition.CenterParent;
-        ClientSize = new Size(560, 700);
+        ClientSize = new Size(680, 780);
+        MinimumSize = new Size(580, 520);
         BackColor = Theme.Window;
         ForeColor = Theme.Text;
         Font = Theme.Ui;
+        AutoScaleMode = AutoScaleMode.Dpi;
 
         var tabs = new TabControl
         {
             Dock = DockStyle.Fill,
-            Padding = new Point(14, 6),
+            Padding = new Point(16, 8),
         };
 
         tabs.TabPages.Add(BuildRecordingTab());
         tabs.TabPages.Add(BuildLookTab());
         tabs.TabPages.Add(BuildAssistantTab());
 
-        var footer = new Panel { Dock = DockStyle.Bottom, Height = 56, BackColor = Theme.Panel };
-        var save = new Button { Text = "Save", Bounds = new Rectangle(396, 12, 72, 30), Tag = "primary" };
-        var cancel = new Button { Text = "Cancel", Bounds = new Rectangle(476, 12, 72, 30) };
-        Theme.StyleButton(save, primary: true);
-        Theme.StyleButton(cancel);
-        save.Click += (_, _) => Commit();
-        cancel.Click += (_, _) => DialogResult = DialogResult.Cancel;
-        footer.Controls.Add(save);
-        footer.Controls.Add(cancel);
-
         Controls.Add(tabs);
-        Controls.Add(footer);
-        AcceptButton = save;
-        CancelButton = cancel;
+        Controls.Add(BuildFooter());
 
         Load += (_, _) =>
         {
             Theme.Apply(this);
-            Theme.EnableDarkTitleBar(Handle);
+            Theme.StyleWindow(Handle);
+            ShowProviderHint();
         };
     }
 
+    private Control BuildFooter()
+    {
+        var footer = new Panel
+        {
+            Dock = DockStyle.Bottom,
+            Height = 60,
+            BackColor = Theme.Panel,
+            Padding = new Padding(16, 13, 16, 13),
+        };
+
+        var row = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            FlowDirection = FlowDirection.RightToLeft,
+            BackColor = Theme.Panel,
+            WrapContents = false,
+        };
+
+        var cancel = new Button { Text = "Cancel", AutoSize = true, MinimumSize = new Size(92, 32) };
+        var save = new Button { Text = "Save", AutoSize = true, MinimumSize = new Size(92, 32), Tag = "primary" };
+
+        Theme.StyleButton(save, primary: true);
+        Theme.StyleButton(cancel);
+
+        save.Click += (_, _) => Commit();
+        cancel.Click += (_, _) => DialogResult = DialogResult.Cancel;
+
+        row.Controls.Add(cancel);
+        row.Controls.Add(save);
+        footer.Controls.Add(row);
+
+        AcceptButton = save;
+        CancelButton = cancel;
+        return footer;
+    }
+
+    // ------------------------------------------------------------------ pages
+
     private TabPage BuildRecordingTab()
     {
-        var page = new TabPage("Recording") { BackColor = Theme.Panel, Padding = new Padding(16) };
-        int y = 16;
+        (TabPage page, TableLayoutPanel table) = NewPage("Recording");
 
-        AddRow(page, "Your name", _author, ref y);
         _author.Text = _settings.Author;
+        AddField(table, "Your name", _author);
 
-        AddRow(page, "Countdown before recording, in seconds", _countdown, ref y);
         Configure(_countdown, 0, 10, _settings.CountdownSeconds);
+        AddField(table, "Countdown before recording, in seconds", _countdown, narrow: true);
 
-        AddRow(page, "Wait before a typing burst becomes a step, in milliseconds", _typingMerge, ref y);
         Configure(_typingMerge, 400, 6000, _settings.TypingMergeMilliseconds, 100);
+        AddField(table, "Wait before a burst of typing becomes a step, in milliseconds", _typingMerge, narrow: true);
 
-        AddCheck(page, _allMonitors, "Capture every monitor instead of the one in use", _settings.CaptureAllMonitors, ref y);
-        AddCheck(page, _keyboard, "Record what is typed", _settings.CaptureKeyboard, ref y);
-        AddCheck(page, _scroll, "Record scrolling", _settings.CaptureScroll, ref y);
-        AddCheck(page, _drag, "Record dragging", _settings.CaptureDrag, ref y);
-        AddCheck(page, _hideApp, "Keep Stepwright itself out of the screenshots", _settings.HideAppFromCaptures, ref y);
-        AddCheck(page, _redactPasswords, "Never store anything typed into a password box", _settings.RedactPasswords, ref y);
-
-        y += 6;
-        page.Controls.Add(new Label
-        {
-            Text = "Hide anything that matches these patterns, one per line",
-            Bounds = new Rectangle(16, y, 480, 18),
-            ForeColor = Theme.Muted,
-        });
-        y += 22;
+        AddCheck(table, _allMonitors, "Capture every monitor instead of the one in use", _settings.CaptureAllMonitors);
+        AddCheck(table, _keyboard, "Record what is typed", _settings.CaptureKeyboard);
+        AddCheck(table, _scroll, "Record scrolling", _settings.CaptureScroll);
+        AddCheck(table, _drag, "Record dragging", _settings.CaptureDrag);
+        AddCheck(table, _hideApp, "Keep Stepwright itself out of the screenshots", _settings.HideAppFromCaptures);
+        AddCheck(table, _redactPasswords, "Never store anything typed into a password box", _settings.RedactPasswords);
 
         _redactPatterns.Multiline = true;
         _redactPatterns.ScrollBars = ScrollBars.Vertical;
-        _redactPatterns.Bounds = new Rectangle(16, y, 496, 74);
+        _redactPatterns.Height = 76;
         _redactPatterns.Text = string.Join(Environment.NewLine, _settings.RedactPatterns);
-        page.Controls.Add(_redactPatterns);
-        y += 84;
+        AddField(table, "Hide anything matching these patterns, one per line", _redactPatterns);
 
-        page.Controls.Add(new Label
-        {
-            Text = "Shortcuts",
-            Bounds = new Rectangle(16, y, 200, 20),
-            Font = Theme.UiBold,
-        });
-        y += 26;
+        AddHeading(table, "Shortcuts");
 
         FillKeys(_keyStart, _settings.HotkeyStartPause);
         FillKeys(_keyStop, _settings.HotkeyStop);
         FillKeys(_keyShot, _settings.HotkeyShot);
 
-        AddInline(page, "Start or pause", _keyStart, 16, y);
-        AddInline(page, "Finish", _keyStop, 190, y);
-        AddInline(page, "Capture now", _keyShot, 364, y);
-        y += 52;
+        var keys = new TableLayoutPanel
+        {
+            ColumnCount = 3,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            Dock = DockStyle.Fill,
+            Margin = new Padding(0),
+            BackColor = Color.Transparent,
+        };
 
-        AddCheck(page, _keyModifiers, "Also hold Ctrl and Shift for these shortcuts", _settings.HotkeyNeedsModifiers, ref y);
+        for (int i = 0; i < 3; i++)
+        {
+            keys.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.33f));
+        }
 
+        keys.Controls.Add(KeyCell("Start or pause", _keyStart), 0, 0);
+        keys.Controls.Add(KeyCell("Finish", _keyStop), 1, 0);
+        keys.Controls.Add(KeyCell("Capture now", _keyShot), 2, 0);
+
+        table.Controls.Add(keys);
+
+        AddCheck(table, _keyModifiers, "Also hold Ctrl and Shift for these shortcuts", _settings.HotkeyNeedsModifiers);
         return page;
     }
 
     private TabPage BuildLookTab()
     {
-        var page = new TabPage("Look") { BackColor = Theme.Panel, Padding = new Padding(16) };
-        int y = 16;
+        (TabPage page, TableLayoutPanel table) = NewPage("Look");
 
-        AddCheck(page, _autoZoom, "Zoom each screenshot to the part that was used", _settings.AutoZoom, ref y);
-        AddRow(page, "Space to keep around the zoomed area, in pixels", _padding, ref y);
+        AddCheck(table, _autoZoom, "Zoom each screenshot to the part that was used", _settings.AutoZoom);
+
         Configure(_padding, 80, 900, _settings.ZoomPadding, 20);
+        AddField(table, "Space to keep around the zoomed area, in pixels", _padding, narrow: true);
 
-        AddCheck(page, _marker, "Mark where the click landed", _settings.ShowClickMarker, ref y);
-        AddCheck(page, _outline, "Outline the control that was used", _settings.ShowElementOutline, ref y);
-        AddCheck(page, _headings, "Start a new section when the application changes", _settings.AddHeadingOnAppChange, ref y);
-        AddCheck(page, _darkTheme, "Dark window colours", _settings.DarkTheme, ref y);
+        AddCheck(table, _marker, "Mark where the click landed", _settings.ShowClickMarker);
+        AddCheck(table, _outline, "Outline the control that was used", _settings.ShowElementOutline);
+        AddCheck(table, _headings, "Start a new section when the application changes", _settings.AddHeadingOnAppChange);
+        AddCheck(table, _darkTheme, "Dark window colours", _settings.DarkTheme);
 
-        y += 8;
-        page.Controls.Add(new Label
-        {
-            Text = "Marker colour",
-            Bounds = new Rectangle(16, y + 6, 110, 20),
-        });
-
-        _markerColor.Bounds = new Rectangle(132, y, 90, 30);
+        _markerColor.Size = new Size(96, 30);
         _markerColor.Text = string.Empty;
         _markerColor.BackColor = _chosenMarker;
         _markerColor.FlatStyle = FlatStyle.Flat;
@@ -188,36 +217,40 @@ public sealed class SettingsForm : Form
                 _markerColor.BackColor = _chosenMarker;
             }
         };
-        page.Controls.Add(_markerColor);
-        y += 44;
 
-        page.Controls.Add(new Label
-        {
-            Text = "A change of colours takes effect the next time Stepwright starts.",
-            Bounds = new Rectangle(16, y, 480, 20),
-            ForeColor = Theme.Muted,
-        });
+        AddField(table, "Marker colour", _markerColor, narrow: true);
+        AddNote(table, "A change of colours takes effect the next time Stepwright starts.");
+
+        AddHeading(table, "Animated steps");
+
+        AddNote(
+            table,
+            "A step can export as a short animation that starts wide and settles on the control"
+            + " that was used. Turn it on for a step with the Animate button while editing. There"
+            + " is nothing else to set up, and these two only exist if you want to nudge it.");
+
+        _gifMotion.DropDownStyle = ComboBoxStyle.DropDownList;
+        _gifMotion.Items.AddRange(new object[] { "Gentle", "Normal", "Quick" });
+        _gifMotion.SelectedItem = _settings.GifMotion is "Gentle" or "Quick" ? _settings.GifMotion : "Normal";
+        AddField(table, "How lively the movement is", _gifMotion, narrow: true);
+        _gifMotion.Width = 160;
+
+        Configure(_gifWidth, 320, 1400, _settings.GifWidth, 20);
+        AddField(table, "Widest an animation is written, in pixels", _gifWidth, narrow: true);
 
         return page;
     }
 
     private TabPage BuildAssistantTab()
     {
-        var page = new TabPage("Assistant") { BackColor = Theme.Panel, Padding = new Padding(16) };
-        int y = 14;
+        (TabPage page, TableLayoutPanel table) = NewPage("Assistant");
 
-        page.Controls.Add(new Label
-        {
-            Text = "Optional. The assistant rewrites the wording of every step and can add a short"
-                + Environment.NewLine
-                + "note where one helps. Nothing is sent anywhere until you turn this on.",
-            Bounds = new Rectangle(16, y, 510, 36),
-            ForeColor = Theme.Muted,
-        });
-        y += 44;
+        AddNote(
+            table,
+            "Optional. The assistant rewrites the wording of every step and can add a short note"
+            + " where one helps. Nothing is sent anywhere until you turn this on.");
 
-        AddCheck(page, _aiEnabled, "Use the assistant", _settings.AiEnabled, ref y);
-        y += 4;
+        AddCheck(table, _aiEnabled, "Use the assistant", _settings.AiEnabled);
 
         _aiProvider.DropDownStyle = ComboBoxStyle.DropDownList;
         foreach (AiProvider provider in AiProviders.All)
@@ -228,71 +261,108 @@ public sealed class SettingsForm : Form
         _aiProvider.SelectedIndex = Math.Max(
             0,
             AiProviders.All.ToList().FindIndex(p => p.Id == _settings.AiProvider));
-
-        AddRow(page, "Service", _aiProvider, ref y);
-        _aiProvider.Width = 496;
         _aiProvider.SelectedIndexChanged += (_, _) => ApplyProviderPreset();
 
-        AddRow(page, "Address", _aiBaseUrl, ref y);
+        AddField(table, "Service", _aiProvider);
+
         _aiBaseUrl.Text = _settings.AiBaseUrl;
+        AddField(table, "Address", _aiBaseUrl);
 
-        AddRow(page, "Model", _aiModel, ref y);
-        _aiModel.Text = _settings.AiModel;
-
-        AddRow(page, "Key, stored encrypted for this Windows account", _aiKey, ref y);
         _aiKey.UseSystemPasswordChar = true;
         _aiKey.Text = _settings.HasAiKey ? new string('*', 24) : string.Empty;
 
         // Tracked rather than guessed from the value, because a real key may contain anything.
         _aiKey.TextChanged += (_, _) => _keyEdited = true;
+        AddField(table, "Key, stored encrypted for this Windows account", _aiKey);
 
-        _aiHint.Bounds = new Rectangle(16, y - 14, 350, 18);
+        var keyRow = new FlowLayoutPanel
+        {
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            Dock = DockStyle.Fill,
+            Margin = new Padding(0, 0, 0, 12),
+            BackColor = Color.Transparent,
+            WrapContents = false,
+        };
+
+        _aiHint.AutoSize = true;
         _aiHint.ForeColor = Theme.Muted;
         _aiHint.Font = Theme.UiSmall;
-        page.Controls.Add(_aiHint);
+        _aiHint.Margin = new Padding(0, 5, 14, 0);
 
-        _aiKeyLink.Bounds = new Rectangle(376, y - 14, 136, 18);
+        _aiKeyLink.AutoSize = true;
         _aiKeyLink.Text = "Where to get a key";
         _aiKeyLink.Font = Theme.UiSmall;
-        _aiKeyLink.TextAlign = ContentAlignment.MiddleRight;
+        _aiKeyLink.Margin = new Padding(0, 5, 0, 0);
         _aiKeyLink.LinkClicked += (_, _) => OpenKeyPage();
-        page.Controls.Add(_aiKeyLink);
-        y += 12;
 
-        AddCheck(
-            page,
-            _aiPictures,
-            "Let the assistant see each screenshot, which makes the steps far better",
-            _settings.AiSendScreenshots,
-            ref y);
+        keyRow.Controls.Add(_aiHint);
+        keyRow.Controls.Add(_aiKeyLink);
+        table.Controls.Add(keyRow);
 
-        page.Controls.Add(new Label
+        // The model is a list you can also type into, filled by asking the service.
+        _aiModel.DropDownStyle = ComboBoxStyle.DropDown;
+        _aiModel.Text = _settings.AiModel;
+
+        var modelRow = new TableLayoutPanel
         {
-            Text = "With this on, the picture for each step is sent to the service you chose above."
-                + Environment.NewLine
-                + "It is the only way the assistant can name what is actually on screen.",
-            Bounds = new Rectangle(34, y, 480, 34),
-            ForeColor = Theme.Muted,
-            Font = Theme.UiSmall,
-        });
-        y += 40;
+            ColumnCount = 2,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            Dock = DockStyle.Fill,
+            Margin = new Padding(0),
+            BackColor = Color.Transparent,
+        };
 
-        AddCheck(page, _aiNotes, "Write a note under a step when it helps", _settings.AiWriteNotes, ref y);
-        y += 6;
+        modelRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        modelRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+
+        _aiModel.Dock = DockStyle.Fill;
+        _aiModel.Margin = new Padding(0, 2, 8, 0);
+
+        _aiModels.Text = "Find models";
+        _aiModels.AutoSize = true;
+        _aiModels.MinimumSize = new Size(116, 28);
+        _aiModels.Margin = new Padding(0, 2, 0, 0);
+        Theme.StyleButton(_aiModels);
+        _aiModels.Click += async (_, _) => await LoadModelsAsync().ConfigureAwait(true);
+
+        modelRow.Controls.Add(_aiModel, 0, 0);
+        modelRow.Controls.Add(_aiModels, 1, 0);
+
+        table.Controls.Add(Caption("Model"));
+        table.Controls.Add(modelRow);
+        AddNote(table, "Find models asks the service which ones your key is allowed to use.");
+
+        AddCheck(table, _aiPictures, "Let the assistant see each screenshot", _settings.AiSendScreenshots);
+
+        AddNote(
+            table,
+            "This is what makes the steps genuinely good, because the picture shows what a browser"
+            + " or an application never reports. The picture for each step is sent to the service"
+            + " chosen above, and nowhere else.");
+
+        AddCheck(table, _aiNotes, "Write a note under a step when it helps", _settings.AiWriteNotes);
 
         _aiTest.Text = "Test the connection";
-        _aiTest.Bounds = new Rectangle(16, y, 150, 30);
+        _aiTest.AutoSize = true;
+        _aiTest.MinimumSize = new Size(152, 30);
+        _aiTest.Margin = new Padding(0, 10, 0, 0);
         Theme.StyleButton(_aiTest);
         _aiTest.Click += async (_, _) => await TestAsync().ConfigureAwait(true);
-        page.Controls.Add(_aiTest);
+        table.Controls.Add(_aiTest);
 
-        _aiResult.Bounds = new Rectangle(176, y + 4, 340, 34);
+        _aiResult.AutoSize = false;
+        _aiResult.Height = 44;
+        _aiResult.Dock = DockStyle.Fill;
         _aiResult.ForeColor = Theme.Muted;
-        page.Controls.Add(_aiResult);
+        _aiResult.Margin = new Padding(0, 8, 0, 0);
+        table.Controls.Add(_aiResult);
 
-        ShowProviderHint();
         return page;
     }
+
+    // ------------------------------------------------------------------ assistant actions
 
     private AiProvider SelectedProvider =>
         AiProviders.All[Math.Clamp(_aiProvider.SelectedIndex, 0, AiProviders.All.Count - 1)];
@@ -302,6 +372,7 @@ public sealed class SettingsForm : Form
     {
         AiProvider provider = SelectedProvider;
         _aiBaseUrl.Text = provider.BaseUrl;
+        _aiModel.Items.Clear();
         _aiModel.Text = provider.Model;
         ShowProviderHint();
     }
@@ -328,12 +399,9 @@ public sealed class SettingsForm : Form
         }
     }
 
-    private async Task TestAsync()
+    /// <summary>The values the buttons on this page should be tried against.</summary>
+    private AppSettings Probe()
     {
-        _aiTest.Enabled = false;
-        _aiResult.ForeColor = Theme.Muted;
-        _aiResult.Text = "Talking to the endpoint...";
-
         var probe = new AppSettings
         {
             AiProvider = SelectedProvider.Id,
@@ -347,17 +415,77 @@ public sealed class SettingsForm : Form
             probe.SetAiKey(_aiKey.Text.Trim());
         }
 
+        return probe;
+    }
+
+    private async Task LoadModelsAsync()
+    {
+        _aiModels.Enabled = false;
+        _aiResult.ForeColor = Theme.Muted;
+        _aiResult.Text = "Asking the service which models it has...";
+
         try
         {
-            using var cancel = new CancellationTokenSource(TimeSpan.FromSeconds(60));
-            string reply = await AiPolisher.TestAsync(probe, cancel.Token).ConfigureAwait(true);
+            using var cancel = new CancellationTokenSource(TimeSpan.FromSeconds(45));
+            IReadOnlyList<string> models = await AiClient.ListModelsAsync(Probe(), cancel.Token).ConfigureAwait(true);
+
+            if (models.Count == 0)
+            {
+                _aiResult.ForeColor = Theme.Muted;
+                _aiResult.Text = "The service returned no models. Type the name in yourself.";
+                return;
+            }
+
+            string current = _aiModel.Text;
+            _aiModel.Items.Clear();
+            foreach (string model in models)
+            {
+                _aiModel.Items.Add(model);
+            }
+
+            // Keep whatever was chosen before when the service still offers it.
+            int match = models.ToList().FindIndex(m => string.Equals(m, current, StringComparison.OrdinalIgnoreCase));
+            if (match >= 0)
+            {
+                _aiModel.SelectedIndex = match;
+            }
+            else
+            {
+                _aiModel.Text = current;
+            }
+
             _aiResult.ForeColor = Theme.Good;
-            _aiResult.Text = "Connected. The model said: " + StepwrightText.Shorten(reply, 60);
+            _aiResult.Text = $"Found {models.Count} models. Open the list to choose one.";
+            _aiModel.DroppedDown = true;
         }
         catch (Exception error)
         {
             _aiResult.ForeColor = Theme.Record;
-            _aiResult.Text = StepwrightText.Shorten(error.Message, 120);
+            _aiResult.Text = StepwrightText.Shorten(error.Message, 180);
+        }
+        finally
+        {
+            _aiModels.Enabled = true;
+        }
+    }
+
+    private async Task TestAsync()
+    {
+        _aiTest.Enabled = false;
+        _aiResult.ForeColor = Theme.Muted;
+        _aiResult.Text = "Talking to the service...";
+
+        try
+        {
+            using var cancel = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+            string reply = await AiPolisher.TestAsync(Probe(), cancel.Token).ConfigureAwait(true);
+            _aiResult.ForeColor = Theme.Good;
+            _aiResult.Text = "Connected. The model said: " + StepwrightText.Shorten(reply, 80);
+        }
+        catch (Exception error)
+        {
+            _aiResult.ForeColor = Theme.Record;
+            _aiResult.Text = StepwrightText.Shorten(error.Message, 180);
         }
         finally
         {
@@ -388,6 +516,8 @@ public sealed class SettingsForm : Form
         _settings.AddHeadingOnAppChange = _headings.Checked;
         _settings.DarkTheme = _darkTheme.Checked;
         _settings.MarkerColor = StepRenderer.ToHex(_chosenMarker);
+        _settings.GifMotion = _gifMotion.SelectedItem as string ?? "Normal";
+        _settings.GifWidth = (int)_gifWidth.Value;
 
         _settings.HotkeyStartPause = KeyOf(_keyStart);
         _settings.HotkeyStop = KeyOf(_keyStop);
@@ -410,11 +540,119 @@ public sealed class SettingsForm : Form
         DialogResult = DialogResult.OK;
     }
 
+    // ------------------------------------------------------------------ layout helpers
+
+    private static (TabPage Page, TableLayoutPanel Table) NewPage(string title)
+    {
+        var page = new TabPage(title)
+        {
+            BackColor = Theme.Panel,
+            Padding = new Padding(18, 14, 22, 14),
+            AutoScroll = true,
+        };
+
+        var table = new TableLayoutPanel
+        {
+            Dock = DockStyle.Top,
+            ColumnCount = 1,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            BackColor = Color.Transparent,
+            Margin = new Padding(0),
+        };
+
+        table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        page.Controls.Add(table);
+        return (page, table);
+    }
+
+    private static Label Caption(string text) => new()
+    {
+        Text = text,
+        AutoSize = true,
+        ForeColor = Theme.Muted,
+        Font = Theme.UiSmall,
+        Margin = new Padding(1, 4, 0, 0),
+        BackColor = Color.Transparent,
+    };
+
+    private static void AddField(TableLayoutPanel table, string label, Control input, bool narrow = false)
+    {
+        table.Controls.Add(Caption(label));
+
+        if (!narrow)
+        {
+            input.Dock = DockStyle.Fill;
+        }
+
+        input.Margin = new Padding(0, 2, 0, 12);
+        table.Controls.Add(input);
+    }
+
+    private static void AddCheck(TableLayoutPanel table, CheckBox box, string label, bool value)
+    {
+        box.Text = label;
+        box.Checked = value;
+        box.AutoSize = true;
+        box.Margin = new Padding(0, 4, 0, 4);
+        box.BackColor = Color.Transparent;
+        table.Controls.Add(box);
+    }
+
+    private static void AddNote(TableLayoutPanel table, string text)
+    {
+        table.Controls.Add(new Label
+        {
+            Text = text,
+            AutoSize = true,
+            MaximumSize = new Size(580, 0),
+            ForeColor = Theme.Muted,
+            Font = Theme.UiSmall,
+            Margin = new Padding(1, 2, 0, 12),
+            BackColor = Color.Transparent,
+        });
+    }
+
+    private static void AddHeading(TableLayoutPanel table, string text)
+    {
+        table.Controls.Add(new Label
+        {
+            Text = text,
+            AutoSize = true,
+            Font = Theme.UiBold,
+            ForeColor = Theme.Text,
+            Margin = new Padding(0, 14, 0, 6),
+            BackColor = Color.Transparent,
+        });
+    }
+
+    private static Control KeyCell(string label, ComboBox combo)
+    {
+        var cell = new TableLayoutPanel
+        {
+            ColumnCount = 1,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            Dock = DockStyle.Fill,
+            Margin = new Padding(0, 0, 12, 12),
+            BackColor = Color.Transparent,
+        };
+
+        cell.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        combo.Dock = DockStyle.Fill;
+        combo.Margin = new Padding(0, 2, 0, 0);
+
+        cell.Controls.Add(Caption(label));
+        cell.Controls.Add(combo);
+        return cell;
+    }
+
     private static void Configure(NumericUpDown control, int min, int max, int value, int step = 1)
     {
         control.Minimum = min;
         control.Maximum = max;
         control.Increment = step;
+        control.Width = 120;
         control.Value = Math.Clamp(value, min, max);
     }
 
@@ -426,52 +664,10 @@ public sealed class SettingsForm : Form
             combo.Items.Add("F" + (key - 0x6F));
         }
 
-        int index = Math.Clamp(selected - 0x70, 0, combo.Items.Count - 1);
-        combo.SelectedIndex = index;
+        combo.SelectedIndex = Math.Clamp(selected - 0x70, 0, combo.Items.Count - 1);
     }
 
     private static int KeyOf(ComboBox combo) => 0x70 + Math.Max(0, combo.SelectedIndex);
-
-    private static void AddRow(Control page, string label, Control input, ref int y)
-    {
-        page.Controls.Add(new Label
-        {
-            Text = label,
-            Bounds = new Rectangle(16, y, 400, 18),
-            ForeColor = Theme.Muted,
-        });
-
-        input.Bounds = new Rectangle(16, y + 20, input is NumericUpDown ? 110 : 496, 26);
-        if (input is ComboBox box)
-        {
-            box.Width = 496;
-        }
-
-        page.Controls.Add(input);
-        y += 56;
-    }
-
-    private static void AddInline(Control page, string label, Control input, int x, int y)
-    {
-        page.Controls.Add(new Label
-        {
-            Text = label,
-            Bounds = new Rectangle(x, y, 160, 18),
-            ForeColor = Theme.Muted,
-        });
-
-        input.Bounds = new Rectangle(x, y + 20, 150, 26);
-        page.Controls.Add(input);
-    }
-
-    private static void AddCheck(Control page, CheckBox box, string label, bool value, ref int y)
-    {
-        box.Text = label;
-        box.Checked = value;
-        box.Bounds = new Rectangle(16, y, 496, 24);
-        page.Controls.Add(box);
-        y += 28;
-    }
 }
 
 internal static class StepwrightText
