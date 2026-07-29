@@ -27,6 +27,7 @@ final class MainWindow: NSWindowController, NSTableViewDataSource, NSTableViewDe
     private var lastVariant: CropVariant = .focus
     private var globalKeys: Any?
     private var localKeys: Any?
+    private var permissionsWindow: PermissionsWindow?
 
     convenience init() {
         let window = NSWindow(
@@ -51,6 +52,14 @@ final class MainWindow: NSWindowController, NSTableViewDataSource, NSTableViewDe
         newGuide(askToSave: false)
         watchForShortcuts()
         GuideStore.cleanupOldWorkFolders()
+
+        // Better to say so at the start than to let a recording fail later.
+        if !Permissions.allGranted || Permissions.needsMoving {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+                self?.showPermissions()
+                self?.updatePermissionNotice()
+            }
+        }
     }
 
     // ------------------------------------------------------------------ layout
@@ -130,6 +139,7 @@ final class MainWindow: NSWindowController, NSTableViewDataSource, NSTableViewDe
         row.addArrangedSubview(exports)
 
         row.addArrangedSubview(NSView())
+        row.addArrangedSubview(button("Permissions", #selector(permissionsTapped)))
         row.addArrangedSubview(button("Settings", #selector(settingsTapped)))
         return row
     }
@@ -635,27 +645,8 @@ final class MainWindow: NSWindowController, NSTableViewDataSource, NSTableViewDe
     }
 
     private func startRecording() {
-        if let missing = Permissions.missing {
-            let alert = NSAlert()
-            alert.messageText = "Stepwright needs permission"
-            alert.informativeText = """
-            macOS has to allow \(missing) before a recording can start. \
-            Grant it in System Settings under Privacy and Security, then come back.
-            """
-
-            alert.addButton(withTitle: "Open System Settings")
-            alert.addButton(withTitle: "Not now")
-
-            if alert.runModal() == .alertFirstButtonReturn {
-                if !Permissions.hasAccessibility {
-                    Permissions.askForAccessibility()
-                    Permissions.openAccessibilitySettings()
-                } else {
-                    Permissions.askForScreenRecording()
-                    Permissions.openScreenRecordingSettings()
-                }
-            }
-
+        guard Permissions.allGranted else {
+            showPermissions()
             return
         }
 
@@ -1161,6 +1152,42 @@ final class MainWindow: NSWindowController, NSTableViewDataSource, NSTableViewDe
                 self.warn("The assistant could not finish. " + error.localizedDescription)
             }
         }
+    }
+
+    @objc func permissionsTapped() { showPermissions() }
+
+    /// Opens the permissions window, or brings the open one to the front.
+    private func showPermissions() {
+        if let existing = permissionsWindow {
+            existing.refresh()
+            existing.window?.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+
+        let controller = PermissionsWindow()
+        controller.onFinished = { [weak self] in
+            self?.permissionsWindow = nil
+            self?.updatePermissionNotice()
+        }
+
+        permissionsWindow = controller
+        controller.showWindow(nil)
+        controller.window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    /// Says up front what is still missing, rather than waiting for a recording to fail.
+    func updatePermissionNotice() {
+        let missing = Permissions.missing
+
+        if missing.isEmpty {
+            status("Press Record, or F9 from anywhere, and Stepwright writes the steps for you.")
+            return
+        }
+
+        let names = missing.map { $0.title }.joined(separator: ", ")
+        status("Waiting on permission: \(names). Open Permissions to sort it out.")
     }
 
     @objc func settingsTapped() {

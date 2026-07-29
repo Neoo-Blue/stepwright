@@ -1,46 +1,167 @@
 import AppKit
 import ApplicationServices
+import IOKit.hid
 import CoreGraphics
 import Foundation
 
-/// The three permissions a recorder needs on this platform, and how to ask for them.
+/// What macOS has to allow before any of this can work, and how to ask for it.
+///
+/// Two things make this harder than it looks. An app run straight from a download is given a
+/// random read only path on every launch, so a permission granted to it is attached to a path
+/// that will not exist next time. And both of these permissions are read once when a process
+/// starts, so granting one while the app is open does nothing until it is opened again.
 enum Permissions {
-    static var hasAccessibility: Bool { AXIsProcessTrusted() }
+    enum Kind: CaseIterable {
+        case accessibility
+        case inputMonitoring
+        case screenRecording
 
-    static var hasScreenRecording: Bool { CGPreflightScreenCaptureAccess() }
+        var title: String {
+            switch self {
+            case .accessibility: return "Accessibility"
+            case .inputMonitoring: return "Input Monitoring"
+            case .screenRecording: return "Screen Recording"
+            }
+        }
 
-    /// Shows the system prompt. macOS only shows it once per app, so the settings pane is
-    /// offered as the way back afterwards.
-    static func askForAccessibility() {
-        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
-        _ = AXIsProcessTrustedWithOptions(options)
+        var reason: String {
+            switch self {
+            case .accessibility:
+                return "Reads the name of the control you click, so a step can say what you actually pressed."
+            case .inputMonitoring:
+                return "Sees your clicks and keystrokes, which is what the steps are made from."
+            case .screenRecording:
+                return "Takes the screenshot at the moment of each action."
+            }
+        }
+
+        var settingsPane: String {
+            switch self {
+            case .accessibility:
+                return "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+            case .inputMonitoring:
+                return "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent"
+            case .screenRecording:
+                return "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+            }
+        }
+
+        /// True when granting this one only takes effect after the app is opened again.
+        var needsReopen: Bool { self != .accessibility }
     }
 
-    static func askForScreenRecording() {
-        _ = CGRequestScreenCaptureAccess()
+    static func granted(_ kind: Kind) -> Bool {
+        switch kind {
+        case .accessibility:
+            return AXIsProcessTrusted()
+        case .inputMonitoring:
+            return IOHIDCheckAccess(kIOHIDRequestTypeListenEvent) == kIOHIDAccessTypeGranted
+        case .screenRecording:
+            return CGPreflightScreenCaptureAccess() || canSeeWindowNames()
+        }
     }
 
-    static func openAccessibilitySettings() {
-        open("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
+    static var allGranted: Bool { Kind.allCases.allSatisfy { granted($0) } }
+
+    static var missing: [Kind] { Kind.allCases.filter { !granted($0) } }
+
+    /// Shows the system prompt. macOS only offers it once, so the settings pane is opened as
+    /// the way back afterwards.
+    static func request(_ kind: Kind) {
+        switch kind {
+        case .accessibility:
+            let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+            _ = AXIsProcessTrustedWithOptions(options)
+        case .inputMonitoring:
+            _ = IOHIDRequestAccess(kIOHIDRequestTypeListenEvent)
+        case .screenRecording:
+            _ = CGRequestScreenCaptureAccess()
+        }
+
+        openSettings(kind)
     }
 
-    static func openScreenRecordingSettings() {
-        open("x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")
-    }
-
-    private static func open(_ address: String) {
-        if let url = URL(string: address) {
+    static func openSettings(_ kind: Kind) {
+        if let url = URL(string: kind.settingsPane) {
             NSWorkspace.shared.open(url)
         }
     }
 
-    /// A plain description of what is missing, or nil when everything is in place.
-    static var missing: String? {
-        var lacking: [String] = []
-        if !hasAccessibility { lacking.append("Accessibility") }
-        if !hasScreenRecording { lacking.append("Screen Recording") }
-        if lacking.isEmpty { return nil }
-        return lacking.joined(separator: " and ")
+    /// Without this permission macOS hides the names of other applications' windows, which is
+    /// a reliable way to tell whether it has really been granted.
+    private static func canSeeWindowNames() -> Bool {
+        guard let list = CGWindowListCopyWindowInfo(
+            [.optionOnScreenOnly, .excludeDesktopElements],
+            kCGNullWindowID) as? [[String: Any]] else { return false }
+
+        let ours = ProcessInfo.processInfo.processIdentifier
+
+        for window in list {
+            guard let pid = window[kCGWindowOwnerPID as String] as? pid_t, pid != ours else { continue }
+            if let name = window[kCGWindowName as String] as? String, !name.isEmpty { return true }
+        }
+
+        return false
+    }
+
+    // ------------------------------------------------------------------ where the app lives
+
+    /// macOS runs an app straight from a download at a throwaway path that changes every
+    /// time, which quietly breaks every permission granted to it.
+    static var isRelocated: Bool {
+        let path = Bundle.main.bundlePath
+        return path.contains("/AppTranslocation/") || path.hasPrefix("/private/var/folders/")
+    }
+
+    static var isInApplications: Bool {
+        let path = Bundle.main.bundlePath
+        return path.hasPrefix("/Applications/") || path.hasPrefix(NSHomeDirectory() + "/Applications/")
+    }
+
+    /// True when permissions cannot be made to stick where the app currently is.
+    static var needsMoving: Bool { isRelocated || !isInApplications }
+
+    /// Moves the app into Applications and opens it again from there.
+    @discardableResult
+    static func moveToApplications() -> String? {
+        let source = Bundle.main.bundleURL
+
+        if isRelocated {
+            return "macOS is running this copy from a temporary place, so it cannot move itself. "
+                + "Drag Stepwright to your Applications folder, then open it from there."
+        }
+
+        let destination = URL(fileURLWithPath: "/Applications")
+            .appendingPathComponent(source.lastPathComponent)
+
+        do {
+            if FileManager.default.fileExists(atPath: destination.path) {
+                try FileManager.default.removeItem(at: destination)
+            }
+
+            try FileManager.default.moveItem(at: source, to: destination)
+            relaunch(at: destination)
+            return nil
+        } catch {
+            return "The app could not move itself. Drag Stepwright to your Applications folder, "
+                + "then open it from there."
+        }
+    }
+
+    /// Opens a fresh copy and lets this one go, which is the only way a permission read at
+    /// startup can be picked up.
+    static func relaunch(at url: URL? = nil) {
+        let target = url ?? Bundle.main.bundleURL
+
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        task.arguments = ["-n", target.path]
+
+        try? task.run()
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+            NSApp.terminate(nil)
+        }
     }
 }
 
