@@ -187,15 +187,29 @@ jobs:
         run: |
           cd "$RUNNER_TEMP/macbuild"
           ditto -c -k --keepParent Stepwright.app "$GITHUB_WORKSPACE/Stepwright-mac.zip"
+          cp Stepwright.dmg "$GITHUB_WORKSPACE/Stepwright.dmg"
+
+          # The disk image is the one people should use, so it has to be the real thing.
+          hdiutil verify "$GITHUB_WORKSPACE/Stepwright.dmg"
+          MOUNT=$(hdiutil attach "$GITHUB_WORKSPACE/Stepwright.dmg" -nobrowse -readonly | tail -1 | awk '{print $NF}')
+          test -d "$MOUNT/Stepwright.app" || { echo "no app on the disk image"; exit 1; }
+          test -L "$MOUNT/Applications" || { echo "no shortcut to Applications"; exit 1; }
+          test -f "$MOUNT/Stepwright.app/Contents/Resources/Stepwright.icns" || { echo "no icon"; exit 1; }
+          echo "disk image holds the app, the icon and the Applications shortcut"
+          hdiutil detach "$MOUNT" >/dev/null
 
       - uses: actions/upload-artifact@v4
         with:
           name: Stepwright-mac
-          path: Stepwright-mac.zip
+          path: |
+            Stepwright.dmg
+            Stepwright-mac.zip
           retention-days: 30
 
       - name: Attach the app to the release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: Stepwright-mac.zip
+          files: |
+            Stepwright.dmg
+            Stepwright-mac.zip
