@@ -160,6 +160,7 @@ public sealed class MainForm : Form
         _exportButton.DropDownItems.Add(Item("Web page with an images folder", (_, _) => ExportHtml(embed: false)));
         _exportButton.DropDownItems.Add(Item("Markdown with an images folder", (_, _) => ExportMarkdown()));
         _exportButton.DropDownItems.Add(Item("Word document", (_, _) => ExportDocx()));
+        _exportButton.DropDownItems.Add(Item("PDF", (_, _) => ExportPdf()));
         _exportButton.DropDownItems.Add(new ToolStripSeparator());
         _exportButton.DropDownItems.Add(Item("Copy for pasting into a knowledge base", (_, _) => CopyRich()));
         _exportButton.DropDownItems.Add(Item("Copy the HTML source", (_, _) => CopyHtmlSource()));
@@ -1559,6 +1560,27 @@ public sealed class MainForm : Form
         RunExport(() =>
         {
             DocxExporter.Export(_guide, _settings, dialog.FileName);
+            return dialog.FileName;
+        });
+    }
+
+    private void ExportPdf()
+    {
+        using var dialog = new SaveFileDialog
+        {
+            Filter = "PDF document (*.pdf)|*.pdf",
+            FileName = GuideStore.SuggestFileName(_guide) + ".pdf",
+            InitialDirectory = EnsureLibraryFolder(),
+        };
+
+        if (dialog.ShowDialog(this) != DialogResult.OK)
+        {
+            return;
+        }
+
+        RunExport(() =>
+        {
+            PdfExporter.Export(_guide, _settings, dialog.FileName);
             return dialog.FileName;
         });
     }

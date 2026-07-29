@@ -28,6 +28,36 @@ jobs:
       - name: Build
         run: dotnet build src/Stepwright/Stepwright.csproj -c Release --no-restore
 
+      - name: Check the document writer
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.Drawing
+          $bitmap = New-Object System.Drawing.Bitmap 900, 520
+          $canvas = [System.Drawing.Graphics]::FromImage($bitmap)
+          $canvas.Clear([System.Drawing.Color]::LightSteelBlue)
+          $canvas.FillEllipse([System.Drawing.Brushes]::OrangeRed, 400, 200, 90, 90)
+          $picture = Join-Path $env:RUNNER_TEMP "probe.jpg"
+          $bitmap.Save($picture, [System.Drawing.Imaging.ImageFormat]::Jpeg)
+
+          $out = Join-Path $env:RUNNER_TEMP "probe.pdf"
+          dotnet run --project tools/PdfProbe/PdfProbe.csproj -c Release -- `
+            $out C:\Windows\Fonts\segoeui.ttf C:\Windows\Fonts\segoeuib.ttf $picture $picture
+
+          if (-not (Test-Path $out)) { throw "no document was produced" }
+          $size = (Get-Item $out).Length
+          Write-Host "document size $size bytes"
+
+          # A real embedded font pushes this well past a hundred kilobytes. Anything smaller
+          # means the font was silently skipped.
+          if ($size -lt 120000) { throw "the document is too small, the font was not embedded" }
+
+          $bytes = [System.IO.File]::ReadAllBytes($out)
+          $head = [System.Text.Encoding]::ASCII.GetString($bytes[0..4])
+          $tail = [System.Text.Encoding]::ASCII.GetString($bytes[($bytes.Length - 6)..($bytes.Length - 1)])
+          if ($head -ne "%PDF-") { throw "wrong file header: $head" }
+          if ($tail -notmatch "%%EOF") { throw "the file is not terminated: $tail" }
+          Write-Host "document header and trailer are correct"
+
       - name: Publish the standalone build
         run: >
           dotnet publish src/Stepwright/Stepwright.csproj

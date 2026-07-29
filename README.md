@@ -17,7 +17,7 @@ browser extension.
 | Desktop applications, not just the browser | yes, every window on Windows | paid tier only |
 | Cost | free, no account | free tier is browser only and watermarked |
 | Where your screenshots go | nowhere, they stay on your machine | uploaded to their cloud |
-| Word and Markdown export | included | paid tier |
+| PDF, Word and Markdown export | included | paid tier |
 | Blur and redact | included, plus automatic password blanking | paid tier |
 | Works with no internet | yes | no |
 | Writing assistant | optional, points at any endpoint you choose, including your own | their model only |
@@ -54,6 +54,8 @@ names of the buttons and fields, not guesses from pixels.
 * Web page with a separate images folder
 * Markdown with an images folder, for a wiki, a repository or a knowledge base
 * Word document, built straight to the open packaging format with no Office needed
+* PDF, written directly with the text font embedded, so it looks the same everywhere and the
+  words stay selectable and searchable rather than being flattened into pictures
 * Copy for pasting, which puts rich content on the clipboard for a knowledge base, an email or a ticket
 * Copy as plain text
 
@@ -128,7 +130,8 @@ src/Stepwright
   Recording/   turns raw input into steps, merges typing, redacts secrets
   Model/       the guide document
   Render/      crop, zoom, click marker, blur, arrows and labels
-  Export/      html, markdown, word, and the guide file format
+  Export/      html, markdown, word, pdf, and the guide file format
+  Export/Pdf/  the document writer, portable on purpose so it can be tested anywhere
   Ai/          the optional writing pass
   Ui/          the window, the editor and the floating recorder bar
 ```
@@ -136,3 +139,9 @@ src/Stepwright
 The recorder never does slow work on the thread that owns the input hook. A hook callback only
 takes the screen grab, then hands the rest to a worker queue, so Windows never drops the hook
 for being late.
+
+The PDF writer under `Export/Pdf` has no dependency on the platform or on any other library.
+It parses the TrueType file to embed it, reads the jpeg header to state the picture geometry,
+and writes the object table by hand. Because it is portable, `tools/PdfProbe` builds the same
+layout code on any machine, and the build checks it on every push against the real Windows
+fonts a person will actually get.
