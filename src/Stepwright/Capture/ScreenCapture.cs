@@ -150,6 +150,11 @@ public static class ScreenCapture
                 return null;
             }
 
+            // The bitmap has to leave the device context before it is read, otherwise the
+            // copy can come back incomplete.
+            NativeMethods.SelectObject(memoryDc, previous);
+            previous = IntPtr.Zero;
+
             // FromHbitmap hands back an opaque picture, so the saved file cannot come out blank.
             return Image.FromHbitmap(bitmap);
         }

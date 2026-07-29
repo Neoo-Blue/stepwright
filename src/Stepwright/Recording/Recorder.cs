@@ -180,7 +180,10 @@ public sealed class Recorder : IDisposable
         // on its own. Nothing in band can be lost or consumed by the wrong reader.
         queue?.CompleteAdding();
 
-        bool finished = worker is null || !worker.IsAlive || worker.Join(TimeSpan.FromSeconds(20));
+        // A short wait, because this runs on the window thread. Anything still in the queue
+        // when the wait runs out keeps arriving through the usual event afterwards, so the
+        // editor simply fills in the last steps a moment after it opens.
+        bool finished = worker is null || !worker.IsAlive || worker.Join(TimeSpan.FromSeconds(5));
 
         State = RecorderState.Idle;
 
