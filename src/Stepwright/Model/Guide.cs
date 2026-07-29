@@ -186,5 +186,7 @@ public sealed class Guide
             ? Path.Combine(MediaFolder, step.Image)
             : string.Empty;
 
+    /// <summary>Ignored when saving, otherwise every step would be written to the file twice.</summary>
+    [JsonIgnore]
     public IEnumerable<Step> Visible => Steps.Where(s => !s.Skip);
 }

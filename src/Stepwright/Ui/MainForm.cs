@@ -61,6 +61,19 @@ public sealed class MainForm : Form
         KeyPreview = true;
         AutoScaleMode = AutoScaleMode.Dpi;
 
+        try
+        {
+            // The window icon comes from the executable, so it always matches the shipped build.
+            if (Environment.ProcessPath is { } executable)
+            {
+                Icon = Icon.ExtractAssociatedIcon(executable);
+            }
+        }
+        catch
+        {
+            // A missing icon is not worth stopping for.
+        }
+
         BuildLayout();
         NewGuide(askToSave: false);
 

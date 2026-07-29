@@ -143,5 +143,6 @@ public sealed class AppSettings
         }
     }
 
+    [JsonIgnore]
     public bool HasAiKey => !string.IsNullOrEmpty(AiKeyProtected);
 }
