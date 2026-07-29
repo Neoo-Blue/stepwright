@@ -245,7 +245,24 @@ public static class UiInspector
             return string.Empty;
         }
 
-        return AppNameCache.GetOrAdd(processId, static id =>
+        if (AppNameCache.TryGetValue(processId, out string? known))
+        {
+            return known;
+        }
+
+        string resolved = Lookup(processId);
+
+        // A blank answer means the lookup failed, so it is not worth remembering.
+        if (!string.IsNullOrEmpty(resolved))
+        {
+            AppNameCache[processId] = resolved;
+        }
+
+        return resolved;
+    }
+
+    private static string Lookup(int id)
+    {
         {
             try
             {
@@ -276,7 +293,7 @@ public static class UiInspector
             {
                 return string.Empty;
             }
-        });
+        }
     }
 
     private static string Clean(string? value)
@@ -301,17 +318,23 @@ public static class UiInspector
     {
         try
         {
-            Task<T?> task = Task.Run<T?>(() =>
-            {
-                try
+            // Long running, so a frozen application blocks a thread of its own rather than
+            // starving the pool that the rest of the recorder depends on.
+            Task<T?> task = Task.Factory.StartNew<T?>(
+                () =>
                 {
-                    return work();
-                }
-                catch
-                {
-                    return null;
-                }
-            });
+                    try
+                    {
+                        return work();
+                    }
+                    catch
+                    {
+                        return null;
+                    }
+                },
+                CancellationToken.None,
+                TaskCreationOptions.LongRunning,
+                TaskScheduler.Default);
 
             return task.Wait(timeoutMilliseconds) ? task.Result : null;
         }
@@ -325,17 +348,21 @@ public static class UiInspector
     {
         try
         {
-            Task task = Task.Run(() =>
-            {
-                try
+            Task task = Task.Factory.StartNew(
+                () =>
                 {
-                    work();
-                }
-                catch
-                {
-                    // Property reads race with the application redrawing itself.
-                }
-            });
+                    try
+                    {
+                        work();
+                    }
+                    catch
+                    {
+                        // Property reads race with the application redrawing itself.
+                    }
+                },
+                CancellationToken.None,
+                TaskCreationOptions.LongRunning,
+                TaskScheduler.Default);
 
             task.Wait(timeoutMilliseconds);
         }

@@ -28,10 +28,7 @@ public static class HtmlExporter
         var body = new StringBuilder();
         int number = 0;
 
-        if (!options.Fragment)
-        {
-            body.AppendLine("<div class=\"sw-doc\">");
-        }
+        body.AppendLine("<div class=\"sw-doc\">");
 
         body.AppendLine("<header class=\"sw-head\">");
         body.AppendLine($"  <h1>{Escape(guide.Title)}</h1>");
@@ -91,12 +88,15 @@ public static class HtmlExporter
         if (!options.Fragment)
         {
             body.AppendLine("<footer class=\"sw-foot\">Made with Stepwright</footer>");
-            body.AppendLine("</div>");
         }
+
+        body.AppendLine("</div>");
 
         if (options.Fragment)
         {
-            return "<style>\n" + Css + "\n</style>\n" + body;
+            // No page level rules here. A fragment that restyled the host page would
+            // repaint whatever it was pasted into.
+            return "<style>\n" + DocumentCss + "\n</style>\n" + body;
         }
 
         var page = new StringBuilder();
@@ -107,7 +107,8 @@ public static class HtmlExporter
         page.AppendLine("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />");
         page.AppendLine($"<title>{Escape(guide.Title)}</title>");
         page.AppendLine("<style>");
-        page.AppendLine(Css);
+        page.AppendLine(PageCss);
+        page.AppendLine(DocumentCss);
         page.AppendLine("</style>");
         page.AppendLine("</head>");
         page.AppendLine("<body>");
@@ -151,7 +152,10 @@ public static class HtmlExporter
     {
         if (!options.EmbedImages)
         {
+            // The folder carries the document name, so two guides exported side by side
+            // cannot overwrite each other's pictures.
             string root = Path.GetDirectoryName(path) ?? Environment.CurrentDirectory;
+            options.ImageFolderName = Path.GetFileNameWithoutExtension(path) + " images";
             options.ImageFolder = Path.Combine(root, options.ImageFolderName);
         }
 
@@ -160,9 +164,15 @@ public static class HtmlExporter
 
     public static string Escape(string? value) => WebUtility.HtmlEncode(value ?? string.Empty);
 
-    private const string Css = """
+    /// <summary>Rules that touch the page itself, used only for a whole document export.</summary>
+    private const string PageCss = """
     :root { color-scheme: light dark; }
     body { margin: 0; background: #f6f7f9; }
+    @media (prefers-color-scheme: dark) { body { background: #14161a; } }
+    """;
+
+    /// <summary>Rules scoped to the guide itself, safe to paste into another page.</summary>
+    private const string DocumentCss = """
     .sw-doc { max-width: 860px; margin: 0 auto; padding: 48px 24px 80px;
       font-family: "Segoe UI", system-ui, -apple-system, Roboto, Helvetica, Arial, sans-serif;
       color: #16181d; line-height: 1.55; }
@@ -184,7 +194,6 @@ public static class HtmlExporter
     .sw-foot { margin-top: 48px; padding-top: 16px; border-top: 1px solid #e3e6ea;
       font-size: 12px; color: #8b929c; text-align: center; }
     @media (prefers-color-scheme: dark) {
-      body { background: #14161a; }
       .sw-doc { color: #e8eaee; }
       .sw-head, .sw-foot { border-color: #2a2e36; }
       .sw-summary { color: #b9bfc9; }
@@ -193,8 +202,7 @@ public static class HtmlExporter
       .sw-section { color: #e8eaee; }
     }
     @media print {
-      body { background: #fff; }
-      .sw-doc { max-width: none; padding: 0; }
+      .sw-doc { max-width: none; padding: 0; background: #fff; }
       .sw-step { break-inside: avoid; page-break-inside: avoid; }
       .sw-shot { box-shadow: none; }
       .sw-foot { display: none; }

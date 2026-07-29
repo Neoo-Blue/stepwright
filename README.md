@@ -102,7 +102,10 @@ megabytes, for machines that already have the .NET 8 desktop runtime.
 ### Notes
 
 * Recording another program that runs as administrator needs Stepwright to run as
-  administrator too, because Windows blocks input hooks from a lower privilege process.
+  administrator too. Windows blocks input hooks from a process with fewer privileges, and it
+  also hides the accessibility tree, so those steps arrive with no control name and read
+  "Click the highlighted spot" until you reword them.
+* Windows 10 version 1607 or later. The key translation relies on a flag added in that release.
 * The bar is hidden from screenshots on Windows 10 version 2004 and later. On older builds it
   is visible in the capture, so move it out of the way.
 

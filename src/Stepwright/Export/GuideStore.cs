@@ -55,7 +55,8 @@ public static class GuideStore
                 JsonSerializer.Serialize(writer, guide, JsonOptions);
             }
 
-            foreach (Step step in guide.Steps.Where(s => s.HasImage))
+            // Duplicated steps share one screenshot, so the same name must not be added twice.
+            foreach (Step step in guide.Steps.Where(s => s.HasImage).DistinctBy(s => s.Image, StringComparer.OrdinalIgnoreCase))
             {
                 string source = guide.ImagePath(step);
                 if (!File.Exists(source))
@@ -73,10 +74,14 @@ public static class GuideStore
 
         if (File.Exists(path))
         {
-            File.Delete(path);
+            // Replace swaps the two files in one step. If anything goes wrong the original
+            // is still there, which matters because this may be the only copy of the guide.
+            File.Replace(temporary, path, null, ignoreMetadataErrors: true);
         }
-
-        File.Move(temporary, path);
+        else
+        {
+            File.Move(temporary, path);
+        }
 
         guide.FilePath = path;
         guide.Dirty = false;
@@ -90,10 +95,23 @@ public static class GuideStore
 
         Guide? guide = null;
 
+        // A guide file can come from someone else, so the extract is bounded.
+        const long MaxExtractedBytes = 2L * 1024 * 1024 * 1024;
+        const int MaxEntries = 5000;
+        long written = 0;
+        int count = 0;
+
         using (var archive = ZipFile.OpenRead(path))
         {
             foreach (ZipArchiveEntry entry in archive.Entries)
             {
+                if (++count > MaxEntries || written > MaxExtractedBytes)
+                {
+                    throw new InvalidDataException("That guide file is larger than Stepwright will open.");
+                }
+
+                written += entry.Length;
+
                 if (entry.FullName.Equals("guide.json", StringComparison.OrdinalIgnoreCase))
                 {
                     using Stream reader = entry.Open();

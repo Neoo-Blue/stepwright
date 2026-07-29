@@ -21,6 +21,7 @@
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
     <InvariantGlobalization>false</InvariantGlobalization>
+    <EnableUnsafeBinaryFormatterSerialization>false</EnableUnsafeBinaryFormatterSerialization>
     <NoWarn>$(NoWarn);CA1416;NU1701;WFAC010</NoWarn>
     <EnableDefaultNoneItems>false</EnableDefaultNoneItems>
   </PropertyGroup>

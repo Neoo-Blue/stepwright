@@ -86,7 +86,9 @@ public static class AiPolisher
                 }
             }
 
-            string reply = await CallAsync(settings, StyleRules, payload.ToString(), token).ConfigureAwait(false);
+            // No ConfigureAwait here on purpose: the rewritten text is applied to steps the
+            // window owns, so the continuation belongs on the caller's thread.
+            string reply = await CallAsync(settings, StyleRules, payload.ToString(), token);
             PolishedBatch? parsed = ParseJson<PolishedBatch>(reply);
             if (parsed is null)
             {

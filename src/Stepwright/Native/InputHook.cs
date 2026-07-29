@@ -51,6 +51,13 @@ public sealed class InputHook : IDisposable
     private IntPtr _keyHook = IntPtr.Zero;
     private bool _disposed;
 
+    /// <summary>
+    /// Shift lock as seen by the keys passing through the hook. The system answer cannot be
+    /// used, because it reflects the calling thread's own message queue and this thread never
+    /// sees the keystrokes going to another application.
+    /// </summary>
+    private bool _capsLock;
+
     public event EventHandler<MouseInputEventArgs>? MouseAction;
     public event EventHandler<KeyInputEventArgs>? KeyAction;
 
@@ -68,21 +75,32 @@ public sealed class InputHook : IDisposable
 
     public void Install()
     {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
         if (IsInstalled)
         {
             return;
         }
 
         IntPtr module = NativeMethods.GetModuleHandleW(null);
+
         _mouseHook = NativeMethods.SetWindowsHookExW(NativeMethods.WH_MOUSE_LL, _mouseProc, module, 0);
+        int mouseError = Marshal.GetLastWin32Error();
+
         _keyHook = NativeMethods.SetWindowsHookExW(NativeMethods.WH_KEYBOARD_LL, _keyProc, module, 0);
+        int keyError = Marshal.GetLastWin32Error();
 
         if (_mouseHook == IntPtr.Zero || _keyHook == IntPtr.Zero)
         {
-            int error = Marshal.GetLastWin32Error();
+            int error = _mouseHook == IntPtr.Zero ? mouseError : keyError;
             Uninstall();
             throw new InvalidOperationException($"Windows refused the input hook (error {error}).");
         }
+
+        // Seed the shift lock from the system now, then follow it key by key. Asking the
+        // system later would be wrong, because this thread never receives the keystrokes
+        // that change it.
+        _capsLock = (NativeMethods.GetKeyState(NativeMethods.VK_CAPITAL) & 1) != 0;
     }
 
     public void Uninstall()
@@ -181,6 +199,11 @@ public sealed class InputHook : IDisposable
                 bool injected = (data.flags & 0x10) != 0;
                 if (!injected)
                 {
+                    if (data.vkCode == NativeMethods.VK_CAPITAL)
+                    {
+                        _capsLock = !_capsLock;
+                    }
+
                     var args = BuildKeyArgs(data);
                     KeyAction?.Invoke(this, args);
                     if (args.Swallow)
@@ -198,7 +221,7 @@ public sealed class InputHook : IDisposable
         return NativeMethods.CallNextHookEx(_keyHook, nCode, wParam, lParam);
     }
 
-    private static KeyInputEventArgs BuildKeyArgs(NativeMethods.KBDLLHOOKSTRUCT data)
+    private KeyInputEventArgs BuildKeyArgs(NativeMethods.KBDLLHOOKSTRUCT data)
     {
         bool shift = NativeMethods.IsKeyDown(NativeMethods.VK_SHIFT);
         bool control = NativeMethods.IsKeyDown(NativeMethods.VK_CONTROL);
@@ -208,7 +231,7 @@ public sealed class InputHook : IDisposable
         // Control or Alt on their own turn a key into a command rather than text.
         // Both together is the AltGr combination on international layouts, which still types.
         bool commandLike = (control ^ alt) || windows;
-        string? text = commandLike ? null : TranslateToText(data.vkCode, data.scanCode, shift);
+        string? text = commandLike ? null : TranslateToText(data.vkCode, data.scanCode, shift, _capsLock);
 
         return new KeyInputEventArgs
         {
@@ -222,7 +245,7 @@ public sealed class InputHook : IDisposable
         };
     }
 
-    private static string? TranslateToText(uint vk, uint scan, bool shift)
+    private static string? TranslateToText(uint vk, uint scan, bool shift, bool capsLock)
     {
         switch (vk)
         {
@@ -254,7 +277,7 @@ public sealed class InputHook : IDisposable
             state[NativeMethods.VK_MENU] = 0x80;
         }
 
-        if ((NativeMethods.GetKeyState(NativeMethods.VK_CAPITAL) & 1) != 0)
+        if (capsLock)
         {
             state[NativeMethods.VK_CAPITAL] = 1;
         }

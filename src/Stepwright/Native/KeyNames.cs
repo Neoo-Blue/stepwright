@@ -26,7 +26,7 @@ public static class KeyNames
         [0x90] = "Num Lock",
         [0x91] = "Scroll Lock",
         [0xBA] = ";",
-        [0xBB] = "+",
+        [0xBB] = "equals",
         [0xBC] = ",",
         [0xBD] = "minus",
         [0xBE] = ".",

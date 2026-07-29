@@ -18,9 +18,14 @@ public sealed class CountdownForm : Form
         ShowInTaskbar = false;
         TopMost = true;
         ClientSize = new Size(190, 190);
-        BackColor = Color.Magenta;
-        TransparencyKey = Color.Magenta;
+        BackColor = Color.FromArgb(20, 21, 25);
         DoubleBuffered = true;
+
+        // The window itself is the circle. Blending against a transparency colour would
+        // leave a coloured fringe around the edge.
+        using var shape = new GraphicsPath();
+        shape.AddEllipse(0, 0, ClientSize.Width, ClientSize.Height);
+        Region = new Region(shape);
 
         Screen screen = Screen.PrimaryScreen ?? Screen.AllScreens[0];
         Rectangle area = screen.WorkingArea;
@@ -66,14 +71,9 @@ public sealed class CountdownForm : Form
     {
         Graphics graphics = e.Graphics;
         graphics.SmoothingMode = SmoothingMode.AntiAlias;
-        graphics.Clear(Color.Magenta);
+        graphics.Clear(Color.FromArgb(20, 21, 25));
 
-        var circle = new Rectangle(10, 10, Width - 20, Height - 20);
-        using (var back = new SolidBrush(Color.FromArgb(225, 20, 21, 25)))
-        {
-            graphics.FillEllipse(back, circle);
-        }
-
+        var circle = new Rectangle(4, 4, Width - 9, Height - 9);
         using (var edge = new Pen(Color.FromArgb(226, 68, 68), 5f))
         {
             graphics.DrawEllipse(edge, circle);

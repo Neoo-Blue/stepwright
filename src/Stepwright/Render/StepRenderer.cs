@@ -36,6 +36,24 @@ public static class StepRenderer
 
     public static string ToHex(Color color) => $"{color.R:X2}{color.G:X2}{color.B:X2}";
 
+    /// <summary>
+    /// Size of the pill a text callout will occupy. The editor stores this so the label can
+    /// be clicked anywhere on it, not only at the corner it was placed from.
+    /// </summary>
+    public static Size MeasureLabel(string text, int thickness)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return new Size(40, 30);
+        }
+
+        using var scratch = new Bitmap(1, 1);
+        using Graphics graphics = Graphics.FromImage(scratch);
+        using var font = new Font("Segoe UI", Math.Max(14, thickness * 5), FontStyle.Bold, GraphicsUnit.Pixel);
+        SizeF measured = graphics.MeasureString(text, font);
+        return new Size((int)measured.Width + 24, (int)measured.Height + 14);
+    }
+
     /// <summary>Region of the source image the step should display.</summary>
     public static Rectangle EffectiveCrop(Step step, Size imageSize, int padding)
     {
@@ -143,7 +161,7 @@ public static class StepRenderer
             foreach (Annotation annotation in step.Annotations.Where(a => a.Kind == AnnotationKind.Blur))
             {
                 Rectangle area = Shift(annotation.Area.Rect, crop);
-                Pixelate(graphics, output, area);
+                Pixelate(graphics, source, area, crop);
             }
 
             if (step.ShowElementOutline && step.ElementArea is { } element && !element.IsEmpty)
@@ -278,10 +296,23 @@ public static class StepRenderer
         return new Rectangle(x, y, Math.Abs(rect.Width), Math.Abs(rect.Height));
     }
 
-    private static void Pixelate(Graphics graphics, Bitmap canvas, Rectangle area)
+    /// <summary>
+    /// Blocks out a region. The pixels are read from the original screenshot rather than from
+    /// the surface being drawn on, because drawing already issued to that surface is not
+    /// guaranteed to be visible to a read. A redaction that samples stale pixels would not
+    /// redact anything, so this reads from a source nothing has touched.
+    /// </summary>
+    private static void Pixelate(Graphics graphics, Bitmap source, Rectangle area, Rectangle crop)
     {
-        Rectangle region = Rectangle.Intersect(Normalize(area), new Rectangle(Point.Empty, canvas.Size));
+        Rectangle region = Rectangle.Intersect(Normalize(area), new Rectangle(0, 0, crop.Width, crop.Height));
         if (region.Width < 2 || region.Height < 2)
+        {
+            return;
+        }
+
+        var sourceRegion = new Rectangle(region.X + crop.X, region.Y + crop.Y, region.Width, region.Height);
+        sourceRegion = Rectangle.Intersect(sourceRegion, new Rectangle(Point.Empty, source.Size));
+        if (sourceRegion.Width < 2 || sourceRegion.Height < 2)
         {
             return;
         }
@@ -294,7 +325,7 @@ public static class StepRenderer
         using (Graphics shrink = Graphics.FromImage(small))
         {
             shrink.InterpolationMode = InterpolationMode.HighQualityBilinear;
-            shrink.DrawImage(canvas, new Rectangle(0, 0, small.Width, small.Height), region, GraphicsUnit.Pixel);
+            shrink.DrawImage(source, new Rectangle(0, 0, small.Width, small.Height), sourceRegion, GraphicsUnit.Pixel);
         }
 
         InterpolationMode previous = graphics.InterpolationMode;

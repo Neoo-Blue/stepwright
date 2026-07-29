@@ -10,7 +10,6 @@ public enum CanvasTool
     Blur,
     Highlight,
     Text,
-    Number,
     Crop,
     Marker,
 }
@@ -133,10 +132,12 @@ public sealed class PreviewCanvas : Control
             case CanvasTool.Crop:
             {
                 using var dim = new SolidBrush(Color.FromArgb(130, 0, 0, 0));
-                var region = new Region(_target);
-                region.Exclude(rect);
-                graphics.FillRegion(dim, region);
-                region.Dispose();
+                using (var region = new Region(_target))
+                {
+                    region.Exclude(rect);
+                    graphics.FillRegion(dim, region);
+                }
+
                 using var pen = new Pen(Color.White, 1.5f) { DashStyle = DashStyle.Dash };
                 graphics.DrawRectangle(pen, rect);
                 break;
@@ -221,12 +222,13 @@ public sealed class PreviewCanvas : Control
     protected override void OnMouseDown(MouseEventArgs e)
     {
         base.OnMouseDown(e);
+        Measure();
         if (_image is null || e.Button != MouseButtons.Left || !_target.Contains(e.Location))
         {
             return;
         }
 
-        if (Tool is CanvasTool.Select or CanvasTool.Marker or CanvasTool.Text or CanvasTool.Number)
+        if (Tool is CanvasTool.Select or CanvasTool.Marker or CanvasTool.Text)
         {
             PointPicked?.Invoke(this, new PointEventArgs { Location = ToSource(e.Location), Tool = Tool });
             if (Tool != CanvasTool.Select)
@@ -248,6 +250,7 @@ public sealed class PreviewCanvas : Control
     protected override void OnMouseMove(MouseEventArgs e)
     {
         base.OnMouseMove(e);
+        Measure();
         if (!_dragging)
         {
             Cursor = Tool == CanvasTool.Select ? Cursors.Default : Cursors.Cross;
@@ -263,6 +266,7 @@ public sealed class PreviewCanvas : Control
     protected override void OnMouseUp(MouseEventArgs e)
     {
         base.OnMouseUp(e);
+        Measure();
         if (!_dragging)
         {
             return;

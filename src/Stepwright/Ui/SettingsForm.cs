@@ -40,6 +40,7 @@ public sealed class SettingsForm : Form
     private readonly Label _aiResult = new();
 
     private Color _chosenMarker;
+    private bool _keyEdited;
 
     public SettingsForm(AppSettings settings)
     {
@@ -222,6 +223,9 @@ public sealed class SettingsForm : Form
         _aiKey.UseSystemPasswordChar = true;
         _aiKey.Text = _settings.HasAiKey ? new string('*', 24) : string.Empty;
 
+        // Tracked rather than guessed from the value, because a real key may contain anything.
+        _aiKey.TextChanged += (_, _) => _keyEdited = true;
+
         _aiTest.Text = "Test the connection";
         _aiTest.Bounds = new Rectangle(16, y, 150, 30);
         Theme.StyleButton(_aiTest);
@@ -248,7 +252,7 @@ public sealed class SettingsForm : Form
             AiKeyProtected = _settings.AiKeyProtected,
         };
 
-        if (!_aiKey.Text.Contains('*') && !string.IsNullOrWhiteSpace(_aiKey.Text))
+        if (_keyEdited && !string.IsNullOrWhiteSpace(_aiKey.Text))
         {
             probe.SetAiKey(_aiKey.Text.Trim());
         }
@@ -304,7 +308,7 @@ public sealed class SettingsForm : Form
         _settings.AiBaseUrl = _aiBaseUrl.Text.Trim();
         _settings.AiModel = _aiModel.Text.Trim();
 
-        if (!_aiKey.Text.Contains('*'))
+        if (_keyEdited)
         {
             _settings.SetAiKey(_aiKey.Text.Trim());
         }

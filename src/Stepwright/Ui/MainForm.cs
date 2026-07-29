@@ -359,7 +359,7 @@ public sealed class MainForm : Form
             {
                 _drawColor = dialog.Color;
                 _canvas.DrawColor = _drawColor;
-                colour.Image = Dot(_drawColor);
+                SetDot(colour, _drawColor);
             }
         };
         strip.Items.Add(colour);
@@ -458,6 +458,13 @@ public sealed class MainForm : Form
         var item = new ToolStripMenuItem(text);
         item.Click += handler;
         return item;
+    }
+
+    private static void SetDot(ToolStripItem item, Color color)
+    {
+        Image? previous = item.Image;
+        item.Image = Dot(color);
+        previous?.Dispose();
     }
 
     private static Bitmap Dot(Color color)
@@ -590,7 +597,7 @@ public sealed class MainForm : Form
 
     private bool ConfirmDiscard()
     {
-        if (!_guide.Dirty || _guide.Steps.Count == 0)
+        if (!_guide.Dirty)
         {
             return true;
         }
@@ -620,8 +627,10 @@ public sealed class MainForm : Form
     {
         string name = _guide.FilePath is null ? "Untitled" : Path.GetFileNameWithoutExtension(_guide.FilePath);
         Text = $"Stepwright   {name}{(_guide.Dirty ? " (unsaved)" : string.Empty)}";
-        int steps = _guide.Steps.Count(s => s.Kind != StepKind.Heading);
-        _statusRight.Text = steps == 1 ? "1 step" : steps + " steps";
+        int steps = _guide.Visible.Count(s => s.Kind != StepKind.Heading);
+        int hidden = _guide.Steps.Count(s => s.Skip);
+        _statusRight.Text = (steps == 1 ? "1 step" : steps + " steps")
+            + (hidden > 0 ? $"   {hidden} hidden" : string.Empty);
     }
 
     // ---------------------------------------------------------------- list
@@ -699,8 +708,7 @@ public sealed class MainForm : Form
 
         using (var badgeInk = new SolidBrush(Color.White))
         {
-            var format = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
-            graphics.DrawString(number.ToString(), Theme.UiSmall, badgeInk, badge, format);
+            graphics.DrawString(number.ToString(), Theme.UiSmall, badgeInk, badge, CentredText);
         }
 
         var thumbArea = new Rectangle(bounds.X + 44, bounds.Y + 8, 86, 58);
@@ -720,8 +728,7 @@ public sealed class MainForm : Form
 
         var textArea = new RectangleF(bounds.X + 140, bounds.Y + 10, bounds.Width - 150, bounds.Height - 20);
         using var ink = new SolidBrush(step.Skip ? Theme.Muted : Theme.Text);
-        var wrap = new StringFormat { Trimming = StringTrimming.EllipsisWord, FormatFlags = 0 };
-        graphics.DrawString(step.Text, Theme.Ui, ink, textArea, wrap);
+        graphics.DrawString(step.Text, Theme.Ui, ink, textArea, WrappedText);
 
         if (step.Skip)
         {
@@ -729,6 +736,18 @@ public sealed class MainForm : Form
             graphics.DrawString("hidden", Theme.UiSmall, hiddenInk, bounds.Right - 60, bounds.Bottom - 20);
         }
     }
+
+    // Held rather than rebuilt, because the list redraws these on every repaint.
+    private static readonly StringFormat CentredText = new()
+    {
+        Alignment = StringAlignment.Center,
+        LineAlignment = StringAlignment.Center,
+    };
+
+    private static readonly StringFormat WrappedText = new()
+    {
+        Trimming = StringTrimming.EllipsisWord,
+    };
 
     private static Rectangle Fit(Size image, Rectangle area)
     {
@@ -775,12 +794,17 @@ public sealed class MainForm : Form
         Task.Run(() =>
         {
             Image? built = null;
+            bool missing = false;
             try
             {
                 if (File.Exists(path))
                 {
                     using Bitmap source = Stepwright.Capture.ScreenCapture.LoadUnlocked(path);
                     built = StepRenderer.Resize(source, 172, 116);
+                }
+                else
+                {
+                    missing = true;
                 }
             }
             catch
@@ -792,15 +816,18 @@ public sealed class MainForm : Form
             {
                 BeginInvoke(() =>
                 {
-                    if (built is null)
+                    // A file that is not there stays marked, so a repaint does not retry it
+                    // forever. Anything else was a passing failure and is worth another go.
+                    if (!missing)
                     {
-                        // Leave the mark in place so a missing file is not retried on every repaint.
-                        return;
+                        _thumbnailsInFlight.Remove(id);
                     }
 
-                    _thumbnailsInFlight.Remove(id);
-                    _thumbnails[id] = built;
-                    _list.Invalidate();
+                    if (built is not null)
+                    {
+                        _thumbnails[id] = built;
+                        _list.Invalidate();
+                    }
                 });
             }
             catch
@@ -975,13 +1002,16 @@ public sealed class MainForm : Form
                     return;
                 }
 
-                step.Annotations.Add(new Annotation
+                var annotation = new Annotation
                 {
                     Kind = AnnotationKind.Text,
-                    Area = new RectI(e.Location.X, e.Location.Y, 10, 10),
                     Text = label,
                     Color = StepRenderer.ToHex(_drawColor),
-                });
+                };
+
+                Size pill = StepRenderer.MeasureLabel(label, annotation.Thickness);
+                annotation.Area = new RectI(e.Location.X, e.Location.Y, pill.Width, pill.Height);
+                step.Annotations.Add(annotation);
                 break;
             }
 
@@ -1165,7 +1195,7 @@ public sealed class MainForm : Form
     private void DeleteStep()
     {
         int index = _list.SelectedIndex;
-        if (index < 0)
+        if (index < 0 || index >= _guide.Steps.Count)
         {
             return;
         }
@@ -1260,7 +1290,7 @@ public sealed class MainForm : Form
         Directory.CreateDirectory(_guide.MediaFolder);
 
         _recordButton.Text = "Pause";
-        _recordButton.Image = Dot(Color.FromArgb(240, 180, 60));
+        SetDot(_recordButton, Color.FromArgb(240, 180, 60));
         _stopButton.Enabled = true;
 
         WindowState = FormWindowState.Minimized;
@@ -1348,7 +1378,7 @@ public sealed class MainForm : Form
     private void ResetRecordButtons()
     {
         _recordButton.Text = "Record";
-        _recordButton.Image = Dot(Theme.Record);
+        SetDot(_recordButton, Theme.Record);
         _stopButton.Enabled = false;
     }
 
@@ -1533,12 +1563,16 @@ public sealed class MainForm : Form
         });
     }
 
-    private void RunExport(Func<string> work)
+    private async void RunExport(Func<string> work)
     {
         Cursor = Cursors.WaitCursor;
+        _exportButton.Enabled = false;
+        Status("Building the export...");
+
         try
         {
-            string path = work();
+            // Rendering happens off the window thread so a long guide cannot freeze the app.
+            string path = await Task.Run(work).ConfigureAwait(true);
             Status("Exported to " + path);
 
             if (MessageBox.Show(
@@ -1557,6 +1591,7 @@ public sealed class MainForm : Form
         }
         finally
         {
+            _exportButton.Enabled = true;
             Cursor = Cursors.Default;
         }
     }
@@ -1736,15 +1771,15 @@ public sealed class MainForm : Form
 
     private void OnFormClosing(object? sender, FormClosingEventArgs e)
     {
-        if (_recorder.State != RecorderState.Idle)
-        {
-            StopRecording();
-        }
-
         if (!ConfirmDiscard())
         {
             e.Cancel = true;
             return;
+        }
+
+        if (_recorder.State != RecorderState.Idle)
+        {
+            StopRecording();
         }
 
         _hotkeys.Dispose();

@@ -121,7 +121,20 @@ public static class StepTextBuilder
         }
 
         string clean = value.Trim();
-        return clean.Length <= max ? clean : clean[..max].TrimEnd() + "...";
+        if (clean.Length <= max)
+        {
+            return clean;
+        }
+
+        // Cutting between the halves of a surrogate pair would leave an invalid character
+        // in the step text, which then travels into every export.
+        int cut = max;
+        if (char.IsHighSurrogate(clean[cut - 1]))
+        {
+            cut--;
+        }
+
+        return clean[..cut].TrimEnd() + "...";
     }
 
     private static string Quote(string value) => "“" + value + "”";
