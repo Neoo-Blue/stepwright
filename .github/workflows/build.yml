@@ -80,8 +80,9 @@ jobs:
           if ($head -ne "GIF89a") { throw "wrong file header: $head" }
           if ($bytes[$bytes.Length - 1] -ne 0x3B) { throw "the file is not terminated" }
 
-          # Every viewer needs the looping marker, so its absence is a real failure.
-          $text = [System.Text.Encoding]::ASCII.GetString($bytes[0..600])
+          # Every viewer needs the looping marker, so its absence is a real failure. It sits
+          # after the colour table, which is 768 bytes on its own, so look well past that.
+          $text = [System.Text.Encoding]::ASCII.GetString($bytes[0..1600])
           if ($text -notmatch "NETSCAPE2.0") { throw "the looping marker is missing" }
           Write-Host "animation header, looping marker and trailer are correct"
 
