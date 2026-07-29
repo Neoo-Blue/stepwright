@@ -79,6 +79,7 @@ public sealed class MainForm : Form
 
         Load += OnFormLoad;
         FormClosing += OnFormClosing;
+        KeyDown += OnFormKeyDown;
     }
 
     // ---------------------------------------------------------------- layout
@@ -254,6 +255,7 @@ public sealed class MainForm : Form
 
         listTools.Items.Add(Button("Up", "Move this step earlier", (_, _) => MoveStep(-1)));
         listTools.Items.Add(Button("Down", "Move this step later", (_, _) => MoveStep(1)));
+        listTools.Items.Add(Button("Merge", "Fold this step into the one above it", (_, _) => MergeIntoPrevious()));
         listTools.Items.Add(Button("Copy", "Duplicate this step", (_, _) => DuplicateStep()));
         listTools.Items.Add(Button("Hide", "Leave this step out of the export", (_, _) => ToggleSkip()));
         listTools.Items.Add(Button("Delete", "Remove this step", (_, _) => DeleteStep()));
@@ -1091,6 +1093,63 @@ public sealed class MainForm : Form
         MarkDirty();
     }
 
+    /// <summary>
+    /// Folds a step into the one before it. The earlier screenshot is kept, because it shows
+    /// the state the reader is looking at when they start the combined instruction.
+    /// </summary>
+    private void MergeIntoPrevious()
+    {
+        int index = _list.SelectedIndex;
+        if (index < 1)
+        {
+            return;
+        }
+
+        Step current = _guide.Steps[index];
+        Step previous = _guide.Steps[index - 1];
+
+        if (previous.Kind == StepKind.Heading || current.Kind == StepKind.Heading)
+        {
+            Status("A section heading cannot be merged.");
+            return;
+        }
+
+        string tail = current.Text.Trim();
+        if (tail.Length > 0)
+        {
+            string head = previous.Text.TrimEnd();
+            if (head.EndsWith('.'))
+            {
+                head = head[..^1];
+            }
+
+            tail = char.ToLowerInvariant(tail[0]) + tail[1..];
+            previous.Text = head + ", then " + tail;
+        }
+
+        if (!string.IsNullOrWhiteSpace(current.Notes))
+        {
+            previous.Notes = string.IsNullOrWhiteSpace(previous.Notes)
+                ? current.Notes
+                : previous.Notes + " " + current.Notes;
+        }
+
+        if (!previous.HasImage && current.HasImage)
+        {
+            previous.Image = current.Image;
+            previous.ClickPoint = current.ClickPoint;
+            previous.ElementArea = current.ElementArea;
+            previous.Crop = current.Crop;
+            current.Image = string.Empty;
+        }
+
+        DropThumbnail(current);
+        _guide.Steps.RemoveAt(index);
+        RebuildList();
+        _list.SelectedIndex = index - 1;
+        MarkDirty();
+    }
+
     private void ToggleSkip()
     {
         if (SelectedStep is not { } step)
@@ -1122,6 +1181,22 @@ public sealed class MainForm : Form
         }
 
         MarkDirty();
+    }
+
+    private void OnFormKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Control && e.KeyCode == Keys.S)
+        {
+            SaveGuide(saveAs: e.Shift);
+            e.Handled = true;
+            e.SuppressKeyPress = true;
+        }
+        else if (e.Control && e.KeyCode == Keys.O)
+        {
+            OpenClicked(this, EventArgs.Empty);
+            e.Handled = true;
+            e.SuppressKeyPress = true;
+        }
     }
 
     private void OnListKeyDown(object? sender, KeyEventArgs e)

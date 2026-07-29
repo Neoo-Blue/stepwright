@@ -51,7 +51,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path artifacts | Out-Null
           Copy-Item publish/standalone/Stepwright.exe artifacts/Stepwright.exe
-          Copy-Item publish/compact/Stepwright.exe artifacts/Stepwright-needs-dotnet8.exe
+          Copy-Item publish/compact/Stepwright.exe artifacts/Stepwright.small.exe
 
       - uses: actions/upload-artifact@v4
         with:

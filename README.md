@@ -69,6 +69,8 @@ so you can reopen and edit it later.
 | F8 | capture the screen as a step right now |
 | Delete | remove the selected step |
 | Ctrl and Up or Down | move the selected step |
+| Ctrl and S | save, add Shift to save under a new name |
+| Ctrl and O | open a guide |
 
 Turn on "Also hold Ctrl and Shift for these shortcuts" in Settings when a plain function key
 clashes with something else you run.
@@ -94,8 +96,8 @@ is stored encrypted for your Windows account with the platform data protection i
 Download `Stepwright.exe` from the latest release and run it. Nothing to install and no
 runtime needed, because the self contained build carries everything with it.
 
-There is also a small build in each release for machines that already have the .NET 8 desktop
-runtime.
+`Stepwright.small.exe` in the same release is a few hundred kilobytes instead of sixty
+megabytes, for machines that already have the .NET 8 desktop runtime.
 
 ### Notes
 
