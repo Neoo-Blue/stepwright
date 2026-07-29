@@ -60,7 +60,10 @@ public sealed class PreviewCanvas : Control
 
     public Color DrawColor { get; set; } = Color.OrangeRed;
 
-    public string EmptyMessage { get; set; } = "No screenshot for this step.";
+    public string EmptyMessage { get; set; } = "No screenshot for this step";
+
+    /// <summary>A quieter second line under the message.</summary>
+    public string EmptyHint { get; set; } = string.Empty;
 
     public event EventHandler<RegionEventArgs>? RegionDrawn;
 
@@ -93,9 +96,7 @@ public sealed class PreviewCanvas : Control
 
         if (_image is null)
         {
-            using var brush = new SolidBrush(Theme.Muted);
-            var format = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
-            graphics.DrawString(EmptyMessage, Theme.Ui, brush, ClientRectangle, format);
+            DrawEmptyState(graphics);
             return;
         }
 
@@ -105,17 +106,28 @@ public sealed class PreviewCanvas : Control
         graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
         graphics.SmoothingMode = SmoothingMode.AntiAlias;
 
-        using (var shadow = new SolidBrush(Color.FromArgb(60, 0, 0, 0)))
+        // A soft stack of shadows under the picture, so it sits on the surface rather than
+        // being pasted onto it.
+        for (int spread = 10; spread >= 2; spread -= 2)
         {
-            graphics.FillRectangle(shadow, _target.X + 3, _target.Y + 4, _target.Width, _target.Height);
+            var halo = new Rectangle(
+                _target.X - (spread / 2),
+                _target.Y - (spread / 2) + 3,
+                _target.Width + spread,
+                _target.Height + spread);
+
+            Theme.FillRounded(graphics, halo, Color.FromArgb(11, 0, 0, 0), 10 + spread);
         }
 
-        graphics.DrawImage(_image, _target);
-
-        using (var frame = new Pen(Theme.Border))
+        using (GraphicsPath clip = Theme.RoundedRect(_target, 8))
         {
-            graphics.DrawRectangle(frame, _target.X, _target.Y, _target.Width - 1, _target.Height - 1);
+            GraphicsState state = graphics.Save();
+            graphics.SetClip(clip);
+            graphics.DrawImage(_image, _target);
+            graphics.Restore(state);
         }
+
+        Theme.DrawRounded(graphics, _target, Theme.Border, 8);
 
         if (_dragging)
         {
@@ -176,6 +188,54 @@ public sealed class PreviewCanvas : Control
                 graphics.DrawRectangle(pen, rect);
                 break;
             }
+        }
+    }
+
+    /// <summary>What the canvas shows before anything has been recorded.</summary>
+    private void DrawEmptyState(Graphics graphics)
+    {
+        graphics.SmoothingMode = SmoothingMode.AntiAlias;
+
+        var centre = new Point(Width / 2, (Height / 2) - 26);
+        var plate = new Rectangle(centre.X - 46, centre.Y - 46, 92, 92);
+        Theme.FillRounded(graphics, plate, Theme.Panel, 22);
+
+        // A small window shape, drawn rather than shipped as a picture.
+        var glass = new Rectangle(plate.X + 22, plate.Y + 26, 48, 36);
+        Theme.FillRounded(graphics, glass, Theme.Raised, 5);
+        Theme.DrawRounded(graphics, glass, Theme.Border, 5);
+
+        using (var bar = new SolidBrush(Theme.Border))
+        {
+            graphics.FillRectangle(bar, glass.X + 1, glass.Y + 1, glass.Width - 2, 7);
+        }
+
+        using (var dot = new SolidBrush(Theme.Accent))
+        {
+            graphics.FillEllipse(dot, glass.Right - 16, glass.Bottom - 15, 9, 9);
+        }
+
+        var format = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Near };
+
+        using (var ink = new SolidBrush(Theme.Text))
+        {
+            graphics.DrawString(
+                EmptyMessage,
+                Theme.UiTitle,
+                ink,
+                new RectangleF(0, plate.Bottom + 18, Width, 30),
+                format);
+        }
+
+        if (!string.IsNullOrEmpty(EmptyHint))
+        {
+            using var muted = new SolidBrush(Theme.Muted);
+            graphics.DrawString(
+                EmptyHint,
+                Theme.Ui,
+                muted,
+                new RectangleF(0, plate.Bottom + 46, Width, 40),
+                format);
         }
     }
 

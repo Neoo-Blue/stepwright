@@ -34,6 +34,7 @@ public sealed class MainForm : Form
     private readonly List<ToolStripButton> _toolButtons = new();
     private readonly List<ToolStripButton> _variantButtons = new();
     private CropVariant _lastVariant = CropVariant.Focus;
+    private int _hoverIndex = -1;
     private readonly ToolStripMenuItem _markerToggle = new();
     private readonly ToolStripMenuItem _outlineToggle = new();
     private readonly ToolStripMenuItem _zoomToggle = new();
@@ -134,7 +135,8 @@ public sealed class MainForm : Form
 
         _recordButton.Text = "Record";
         _recordButton.ToolTipText = "Start recording every click and keystroke";
-        _recordButton.Image = Dot(Theme.Record);
+        _recordButton.Tag = "primary";
+        _recordButton.Image = Dot(Color.White);
         _recordButton.ImageScaling = ToolStripItemImageScaling.None;
         _recordButton.Click += (_, _) => ToggleRecording();
         strip.Items.Add(_recordButton);
@@ -242,7 +244,7 @@ public sealed class MainForm : Form
 
         _list.Dock = DockStyle.Fill;
         _list.DrawMode = DrawMode.OwnerDrawFixed;
-        _list.ItemHeight = 74;
+        _list.ItemHeight = 78;
         _list.BorderStyle = BorderStyle.None;
         _list.BackColor = Theme.Panel;
         _list.ForeColor = Theme.Text;
@@ -250,6 +252,8 @@ public sealed class MainForm : Form
         _list.DrawItem += OnDrawStep;
         _list.SelectedIndexChanged += (_, _) => LoadSelectedStep();
         _list.KeyDown += OnListKeyDown;
+        _list.MouseMove += OnListMouseMove;
+        _list.MouseLeave += (_, _) => SetHover(-1);
 
         var listTools = new ToolStrip
         {
@@ -818,18 +822,26 @@ public sealed class MainForm : Form
 
         var step = (Step)_list.Items[e.Index];
         Graphics graphics = e.Graphics;
-        bool selected = (e.State & DrawItemState.Selected) != 0;
-        Rectangle bounds = e.Bounds;
+        graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
 
-        using (var back = new SolidBrush(selected ? Theme.Raised : Theme.Panel))
+        bool selected = (e.State & DrawItemState.Selected) != 0;
+        bool hovered = e.Index == _hoverIndex && !selected;
+
+        using (var back = new SolidBrush(Theme.Panel))
         {
-            graphics.FillRectangle(back, bounds);
+            graphics.FillRectangle(back, e.Bounds);
         }
+
+        var card = new Rectangle(e.Bounds.X + 6, e.Bounds.Y + 3, e.Bounds.Width - 14, e.Bounds.Height - 6);
 
         if (selected)
         {
-            using var edge = new SolidBrush(Theme.Accent);
-            graphics.FillRectangle(edge, bounds.X, bounds.Y, 3, bounds.Height);
+            Theme.FillRounded(graphics, card, Theme.AccentSoft);
+            Theme.DrawRounded(graphics, card, Theme.Accent);
+        }
+        else if (hovered)
+        {
+            Theme.FillRounded(graphics, card, Theme.Raised);
         }
 
         if (step.Kind == StepKind.Heading)
@@ -839,50 +851,85 @@ public sealed class MainForm : Form
                 string.IsNullOrWhiteSpace(step.Text) ? "Section" : step.Text,
                 Theme.UiTitle,
                 headingInk,
-                new RectangleF(bounds.X + 14, bounds.Y + 24, bounds.Width - 26, 30));
+                new RectangleF(card.X + 12, card.Y + 22, card.Width - 24, 28));
+
             using var line = new Pen(Theme.Border);
-            graphics.DrawLine(line, bounds.X + 14, bounds.Bottom - 6, bounds.Right - 14, bounds.Bottom - 6);
+            graphics.DrawLine(line, card.X + 12, card.Bottom - 8, card.Right - 12, card.Bottom - 8);
             return;
         }
 
+        // Thumbnail first, because it anchors the row visually.
+        var thumbArea = new Rectangle(card.X + 10, card.Y + 8, 84, card.Height - 16);
+        Image? thumbnail = Thumbnail(step);
+
+        if (thumbnail is not null)
+        {
+            Rectangle fitted = Fit(thumbnail.Size, thumbArea);
+            using (var clip = Theme.RoundedRect(fitted, 4))
+            {
+                System.Drawing.Drawing2D.GraphicsState state = graphics.Save();
+                graphics.SetClip(clip);
+                graphics.DrawImage(thumbnail, fitted);
+                graphics.Restore(state);
+            }
+
+            Theme.DrawRounded(graphics, fitted, Theme.Border, 4);
+        }
+        else
+        {
+            Theme.FillRounded(graphics, thumbArea, Theme.Raised, 4);
+        }
+
         int number = NumberOf(e.Index);
-        var badge = new Rectangle(bounds.X + 12, bounds.Y + 10, 24, 24);
+        var badge = new Rectangle(thumbArea.X - 4, thumbArea.Y - 4, 20, 20);
+
         using (var badgeBrush = new SolidBrush(step.Skip ? Theme.Border : Theme.Accent))
         {
-            graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
             graphics.FillEllipse(badgeBrush, badge);
         }
 
         using (var badgeInk = new SolidBrush(Color.White))
         {
-            graphics.DrawString(number.ToString(), Theme.UiSmall, badgeInk, badge, CentredText);
+            graphics.DrawString(number.ToString(), Theme.UiTiny, badgeInk, badge, CentredText);
         }
 
-        var thumbArea = new Rectangle(bounds.X + 44, bounds.Y + 8, 86, 58);
-        Image? thumbnail = Thumbnail(step);
-        if (thumbnail is not null)
-        {
-            var fitted = Fit(thumbnail.Size, thumbArea);
-            graphics.DrawImage(thumbnail, fitted);
-            using var frame = new Pen(Theme.Border);
-            graphics.DrawRectangle(frame, fitted);
-        }
-        else
-        {
-            using var empty = new SolidBrush(Theme.Raised);
-            graphics.FillRectangle(empty, thumbArea);
-        }
+        int textLeft = thumbArea.Right + 12;
+        int textWidth = card.Right - textLeft - 10;
 
-        var textArea = new RectangleF(bounds.X + 140, bounds.Y + 10, bounds.Width - 150, bounds.Height - 20);
         using var ink = new SolidBrush(step.Skip ? Theme.Muted : Theme.Text);
-        graphics.DrawString(step.Text, Theme.Ui, ink, textArea, WrappedText);
+        graphics.DrawString(
+            step.Text,
+            Theme.UiStep,
+            ink,
+            new RectangleF(textLeft, card.Y + 9, textWidth, card.Height - 30),
+            WrappedText);
 
-        if (step.Skip)
-        {
-            using var hiddenInk = new SolidBrush(Theme.Muted);
-            graphics.DrawString("hidden", Theme.UiSmall, hiddenInk, bounds.Right - 60, bounds.Bottom - 20);
-        }
+        // A quiet line at the foot of the card saying what kind of action this was.
+        string kind = Describe(step.Kind);
+        string trailer = step.Skip ? "hidden" : kind;
+
+        using var trailerInk = new SolidBrush(Theme.Muted);
+        graphics.DrawString(
+            trailer,
+            Theme.UiSmall,
+            trailerInk,
+            new RectangleF(textLeft, card.Bottom - 20, textWidth, 16));
     }
+
+    private static string Describe(StepKind kind) => kind switch
+    {
+        StepKind.Click => "Click",
+        StepKind.DoubleClick => "Double click",
+        StepKind.RightClick => "Right click",
+        StepKind.MiddleClick => "Middle click",
+        StepKind.Drag => "Drag",
+        StepKind.Type => "Typing",
+        StepKind.Hotkey => "Shortcut",
+        StepKind.Scroll => "Scroll",
+        StepKind.Screenshot => "Screen",
+        StepKind.Note => "Note",
+        _ => string.Empty,
+    };
 
     // Held rather than rebuilt, because the list redraws these on every repaint.
     private static readonly StringFormat CentredText = new()
@@ -1068,9 +1115,11 @@ public sealed class MainForm : Form
         Step? step = SelectedStep;
         if (step is null || !step.HasImage)
         {
-            _canvas.EmptyMessage = step is null
-                ? "Record a guide, or open one you saved earlier."
-                : "This step has no screenshot.";
+            bool empty = step is null;
+            _canvas.EmptyMessage = empty ? "Nothing recorded yet" : "This step has no screenshot";
+            _canvas.EmptyHint = empty
+                ? $"Press Record, or F{_settings.HotkeyStartPause - 0x6F} from anywhere, then do the task once."
+                : "Add a note, or a heading, to give the reader some context.";
             _canvas.SetImage(null, Point.Empty);
             return;
         }
@@ -1078,7 +1127,8 @@ public sealed class MainForm : Form
         RenderedStep? rendered = GuideRenderer.RenderDetailed(_guide, step, _settings, 2400);
         if (rendered is null)
         {
-            _canvas.EmptyMessage = "The screenshot for this step is missing.";
+            _canvas.EmptyMessage = "The screenshot is missing";
+            _canvas.EmptyHint = "The picture file for this step could not be read.";
             _canvas.SetImage(null, Point.Empty);
             return;
         }
@@ -1394,6 +1444,33 @@ public sealed class MainForm : Form
         }
     }
 
+    private void OnListMouseMove(object? sender, MouseEventArgs e)
+    {
+        int index = _list.IndexFromPoint(e.Location);
+        SetHover(index == ListBox.NoMatches ? -1 : index);
+    }
+
+    private void SetHover(int index)
+    {
+        if (_hoverIndex == index)
+        {
+            return;
+        }
+
+        int previous = _hoverIndex;
+        _hoverIndex = index;
+
+        if (previous >= 0 && previous < _list.Items.Count)
+        {
+            _list.Invalidate(_list.GetItemRectangle(previous));
+        }
+
+        if (index >= 0 && index < _list.Items.Count)
+        {
+            _list.Invalidate(_list.GetItemRectangle(index));
+        }
+    }
+
     private void OnListKeyDown(object? sender, KeyEventArgs e)
     {
         if (e.KeyCode == Keys.Delete)
@@ -1455,6 +1532,7 @@ public sealed class MainForm : Form
         Directory.CreateDirectory(_guide.MediaFolder);
 
         _recordButton.Text = "Pause";
+        _recordButton.Tag = null;
         SetDot(_recordButton, Color.FromArgb(240, 180, 60));
         _stopButton.Enabled = true;
 
@@ -1543,7 +1621,8 @@ public sealed class MainForm : Form
     private void ResetRecordButtons()
     {
         _recordButton.Text = "Record";
-        SetDot(_recordButton, Theme.Record);
+        _recordButton.Tag = "primary";
+        SetDot(_recordButton, Color.White);
         _stopButton.Enabled = false;
     }
 
@@ -1979,7 +2058,7 @@ public sealed class MainForm : Form
 
     private void OnFormLoad(object? sender, EventArgs e)
     {
-        Theme.EnableDarkTitleBar(Handle);
+        Theme.StyleWindow(Handle);
         Theme.Apply(this);
 
         if (_split is not null && _split.Width > 760)
