@@ -23,6 +23,7 @@ browser extension.
 | Writing assistant | optional, and you pick the service: GPT, Claude, Gemini or your own | their model only |
 | Screenshot framing | four framings per step, switchable after recording | one |
 | Animated steps | built from the screenshot you already took, no extra recording | video is a separate paid product |
+| A whole guide as one animation | included | not offered |
 
 ## How it works
 
@@ -32,8 +33,10 @@ browser extension.
 3. Press **Finish**. Every step is already written and illustrated.
 4. Pick how each screenshot is framed: the whole screen, just the window, around the control,
    or tight on it. One click, and you can apply the same choice to every step at once.
-5. Edit anything: reword a step, reorder, merge, hide a step, crop, blur, add arrows and labels.
-6. Export.
+5. Press **Animate** on any step that deserves movement, or animate every step at once.
+6. Edit anything: reword a step, reorder, merge, hide a step, crop, blur, add arrows and labels.
+7. Optionally press **Improve with AI** to tidy the wording and add notes.
+8. Export.
 
 ## What gets recorded
 
@@ -63,10 +66,20 @@ names of the buttons and fields, not guesses from pixels.
 * Copy for pasting, which puts rich content on the clipboard for a knowledge base, an email or a ticket
 * Copy as plain text
 
-Any step can also be exported as a short animation that starts wide and settles on the control
-that was used, built from the screenshot already captured rather than from a separate recording.
-Web pages and Markdown show it moving. A Word document or a PDF uses the still picture, since
-neither can animate.
+### Animation
+
+Two kinds, and they answer different needs.
+
+* **A single step.** Press Animate while editing it. The picture starts wide, so the reader
+  sees where they are, then settles on the control that was used. Web pages and Markdown show
+  it moving. A Word document or a PDF quietly uses the still picture, since neither can animate.
+* **The whole guide, as one animation.** Export, then "The whole guide as one animation". Every
+  step in order, each held long enough to read, with its number and a bar showing how far along
+  it is. This is the one to paste into a chat or put at the top of a page.
+
+Both are built from the screenshots already captured, so there is nothing to record twice and
+nothing to time. The same step always produces the same animation. The only two settings, under
+Look, are how lively the movement is and how wide the file is written.
 
 The guide itself saves as one `.stepwright` file that holds the text and every screenshot,
 so you can reopen and edit it later.
@@ -104,6 +117,9 @@ Off until you turn it on. Pick a service in Settings and the address and model f
 in: OpenAI for the GPT models, Anthropic for Claude, Google for Gemini, or anything that speaks
 the OpenAI shape, which covers your own gateway and a local model. The key is stored encrypted
 for your Windows account with the platform data protection interface.
+
+Press **Find models** and Stepwright asks that service which models your key is actually allowed
+to use, then fills the list. You can still type a name yourself.
 
 It rewrites the wording of every step and adds a short note where one genuinely helps.
 
@@ -175,7 +191,7 @@ which removes "Unknown publisher". SmartScreen separately asks whether this file
 before, and only an extended validation or Trusted Signing certificate carries reputation from
 the start. With an ordinary certificate the first few people still see a warning.
 
-### Notes
+## Good to know
 
 * Recording another program that runs as administrator needs Stepwright to run as
   administrator too. Windows blocks input hooks from a process with fewer privileges, and it
@@ -203,7 +219,7 @@ src/Stepwright
   Capture/     screen grabs and the accessibility lookup that names what was clicked
   Recording/   turns raw input into steps, merges typing, redacts secrets
   Model/       the guide document
-  Render/      crop, zoom, click marker, blur, arrows and labels
+  Render/      crop, zoom, click marker, blur, arrows, labels and the animations
   Export/      html, markdown, word, pdf, and the guide file format
   Export/Pdf/  the document writer, portable on purpose so it can be tested anywhere
   Export/Gif/  the animation writer, portable for the same reason
@@ -215,9 +231,16 @@ The recorder never does slow work on the thread that owns the input hook. A hook
 takes the screen grab, then hands the rest to a worker queue, so Windows never drops the hook
 for being late.
 
-The PDF and animation writers under `Export/Pdf` and `Export/Gif` have no dependency on the
-platform or on any other library.
-It parses the TrueType file to embed it, reads the jpeg header to state the picture geometry,
-and writes the object table by hand. Because it is portable, `tools/PdfProbe` builds the same
-layout code on any machine, and the build checks it on every push against the real Windows
-fonts a person will actually get.
+The PDF and animation writers under `Export/Pdf` and `Export/Gif` carry no dependency on the
+platform or on any other library, and that is deliberate rather than a point of pride.
+
+The document writer parses the TrueType file to embed the font, reads the jpeg header to state
+each picture's geometry, and writes the object table and cross reference table by hand. The
+animation writer reduces the colours with a median cut palette and does the compression the
+format requires.
+
+Because both are portable, `tools/PdfProbe` and `tools/GifProbe` build the very same code that
+ships and produce real output on any machine, which is how they were checked: the document
+parsed by a reader and rendered to images, the animation decoded frame by frame with its
+durations, its looping marker and its colours compared against the source. The build repeats
+both checks on every push, the document one against the real Windows fonts a person will get.
