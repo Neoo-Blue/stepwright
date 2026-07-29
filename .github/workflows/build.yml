@@ -83,6 +83,33 @@ jobs:
           Copy-Item publish/standalone/Stepwright.exe artifacts/Stepwright.exe
           Copy-Item publish/compact/Stepwright.exe artifacts/Stepwright.small.exe
 
+      # Runs only once a certificate has been added to the repository secrets. Without one
+      # the builds are still produced, they are simply unsigned.
+      - name: Sign the builds
+        if: ${{ secrets.SIGNING_CERT_BASE64 != '' }}
+        shell: pwsh
+        env:
+          CERT: ${{ secrets.SIGNING_CERT_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.SIGNING_CERT_PASSWORD }}
+        run: |
+          $pfx = Join-Path $env:RUNNER_TEMP "signing.pfx"
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:CERT))
+
+          $signtool = (Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" |
+            Sort-Object FullName)[-1].FullName
+          Write-Host "using $signtool"
+
+          foreach ($file in Get-ChildItem artifacts/*.exe) {
+            & $signtool sign /fd SHA256 /td SHA256 /tr http://timestamp.digicert.com `
+              /f $pfx /p $env:CERT_PASSWORD $file.FullName
+            if ($LASTEXITCODE -ne 0) { throw "signing failed for $($file.Name)" }
+          }
+
+          Remove-Item $pfx -Force
+          foreach ($file in Get-ChildItem artifacts/*.exe) {
+            & $signtool verify /pa /v $file.FullName
+          }
+
       - uses: actions/upload-artifact@v4
         with:
           name: Stepwright

@@ -33,11 +33,16 @@ public sealed class SettingsForm : Form
     private readonly CheckBox _keyModifiers = new();
 
     private readonly CheckBox _aiEnabled = new();
+    private readonly ComboBox _aiProvider = new();
     private readonly TextBox _aiBaseUrl = new();
     private readonly TextBox _aiModel = new();
     private readonly TextBox _aiKey = new();
+    private readonly CheckBox _aiPictures = new();
+    private readonly CheckBox _aiNotes = new();
     private readonly Button _aiTest = new();
     private readonly Label _aiResult = new();
+    private readonly LinkLabel _aiKeyLink = new();
+    private readonly Label _aiHint = new();
 
     private Color _chosenMarker;
     private bool _keyEdited;
@@ -199,21 +204,36 @@ public sealed class SettingsForm : Form
     private TabPage BuildAssistantTab()
     {
         var page = new TabPage("Assistant") { BackColor = Theme.Panel, Padding = new Padding(16) };
-        int y = 16;
+        int y = 14;
 
         page.Controls.Add(new Label
         {
-            Text = "Optional. Stepwright can ask a language model to tidy the wording of every step."
+            Text = "Optional. The assistant rewrites the wording of every step and can add a short"
                 + Environment.NewLine
-                + "Nothing leaves this computer unless you turn this on. Screenshots are never sent.",
-            Bounds = new Rectangle(16, y, 500, 40),
+                + "note where one helps. Nothing is sent anywhere until you turn this on.",
+            Bounds = new Rectangle(16, y, 510, 36),
             ForeColor = Theme.Muted,
         });
-        y += 50;
+        y += 44;
 
-        AddCheck(page, _aiEnabled, "Enable the writing assistant", _settings.AiEnabled, ref y);
+        AddCheck(page, _aiEnabled, "Use the assistant", _settings.AiEnabled, ref y);
+        y += 4;
 
-        AddRow(page, "Endpoint that speaks the chat completions shape", _aiBaseUrl, ref y);
+        _aiProvider.DropDownStyle = ComboBoxStyle.DropDownList;
+        foreach (AiProvider provider in AiProviders.All)
+        {
+            _aiProvider.Items.Add(provider.Label);
+        }
+
+        _aiProvider.SelectedIndex = Math.Max(
+            0,
+            AiProviders.All.ToList().FindIndex(p => p.Id == _settings.AiProvider));
+
+        AddRow(page, "Service", _aiProvider, ref y);
+        _aiProvider.Width = 496;
+        _aiProvider.SelectedIndexChanged += (_, _) => ApplyProviderPreset();
+
+        AddRow(page, "Address", _aiBaseUrl, ref y);
         _aiBaseUrl.Text = _settings.AiBaseUrl;
 
         AddRow(page, "Model", _aiModel, ref y);
@@ -226,17 +246,86 @@ public sealed class SettingsForm : Form
         // Tracked rather than guessed from the value, because a real key may contain anything.
         _aiKey.TextChanged += (_, _) => _keyEdited = true;
 
+        _aiHint.Bounds = new Rectangle(16, y - 14, 350, 18);
+        _aiHint.ForeColor = Theme.Muted;
+        _aiHint.Font = Theme.UiSmall;
+        page.Controls.Add(_aiHint);
+
+        _aiKeyLink.Bounds = new Rectangle(376, y - 14, 136, 18);
+        _aiKeyLink.Text = "Where to get a key";
+        _aiKeyLink.Font = Theme.UiSmall;
+        _aiKeyLink.TextAlign = ContentAlignment.MiddleRight;
+        _aiKeyLink.LinkClicked += (_, _) => OpenKeyPage();
+        page.Controls.Add(_aiKeyLink);
+        y += 12;
+
+        AddCheck(
+            page,
+            _aiPictures,
+            "Let the assistant see each screenshot, which makes the steps far better",
+            _settings.AiSendScreenshots,
+            ref y);
+
+        page.Controls.Add(new Label
+        {
+            Text = "With this on, the picture for each step is sent to the service you chose above."
+                + Environment.NewLine
+                + "It is the only way the assistant can name what is actually on screen.",
+            Bounds = new Rectangle(34, y, 480, 34),
+            ForeColor = Theme.Muted,
+            Font = Theme.UiSmall,
+        });
+        y += 40;
+
+        AddCheck(page, _aiNotes, "Write a note under a step when it helps", _settings.AiWriteNotes, ref y);
+        y += 6;
+
         _aiTest.Text = "Test the connection";
         _aiTest.Bounds = new Rectangle(16, y, 150, 30);
         Theme.StyleButton(_aiTest);
         _aiTest.Click += async (_, _) => await TestAsync().ConfigureAwait(true);
         page.Controls.Add(_aiTest);
 
-        _aiResult.Bounds = new Rectangle(176, y + 6, 336, 40);
+        _aiResult.Bounds = new Rectangle(176, y + 4, 340, 34);
         _aiResult.ForeColor = Theme.Muted;
         page.Controls.Add(_aiResult);
 
+        ShowProviderHint();
         return page;
+    }
+
+    private AiProvider SelectedProvider =>
+        AiProviders.All[Math.Clamp(_aiProvider.SelectedIndex, 0, AiProviders.All.Count - 1)];
+
+    /// <summary>Fills the address and the model with values that work for the chosen service.</summary>
+    private void ApplyProviderPreset()
+    {
+        AiProvider provider = SelectedProvider;
+        _aiBaseUrl.Text = provider.BaseUrl;
+        _aiModel.Text = provider.Model;
+        ShowProviderHint();
+    }
+
+    private void ShowProviderHint()
+    {
+        AiProvider provider = SelectedProvider;
+        _aiHint.Text = provider.Hint;
+        _aiKeyLink.Visible = !string.IsNullOrEmpty(provider.KeyPage);
+    }
+
+    private void OpenKeyPage()
+    {
+        try
+        {
+            using var process = new System.Diagnostics.Process();
+            process.StartInfo.FileName = SelectedProvider.KeyPage;
+            process.StartInfo.UseShellExecute = true;
+            process.Start();
+        }
+        catch
+        {
+            // No browser association, nothing sensible to do.
+        }
     }
 
     private async Task TestAsync()
@@ -247,6 +336,7 @@ public sealed class SettingsForm : Form
 
         var probe = new AppSettings
         {
+            AiProvider = SelectedProvider.Id,
             AiBaseUrl = _aiBaseUrl.Text.Trim(),
             AiModel = _aiModel.Text.Trim(),
             AiKeyProtected = _settings.AiKeyProtected,
@@ -305,8 +395,11 @@ public sealed class SettingsForm : Form
         _settings.HotkeyNeedsModifiers = _keyModifiers.Checked;
 
         _settings.AiEnabled = _aiEnabled.Checked;
+        _settings.AiProvider = SelectedProvider.Id;
         _settings.AiBaseUrl = _aiBaseUrl.Text.Trim();
         _settings.AiModel = _aiModel.Text.Trim();
+        _settings.AiSendScreenshots = _aiPictures.Checked;
+        _settings.AiWriteNotes = _aiNotes.Checked;
 
         if (_keyEdited)
         {
@@ -349,6 +442,11 @@ public sealed class SettingsForm : Form
         });
 
         input.Bounds = new Rectangle(16, y + 20, input is NumericUpDown ? 110 : 496, 26);
+        if (input is ComboBox box)
+        {
+            box.Width = 496;
+        }
+
         page.Controls.Add(input);
         y += 56;
     }

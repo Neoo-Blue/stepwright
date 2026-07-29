@@ -696,6 +696,11 @@ public sealed class Recorder : IDisposable
             step.ElementArea = RectI.From(work.Frame.ToImageRect(element.Bounds));
         }
 
+        if (!element.WindowBounds.IsEmpty)
+        {
+            step.WindowArea = RectI.From(work.Frame.ToImageRect(element.WindowBounds));
+        }
+
         step.Text = StepTextBuilder.Describe(work.Kind, element, place);
         step.OriginalText = step.Text;
         step.Image = SaveFrame(work.Frame);
@@ -779,6 +784,11 @@ public sealed class Recorder : IDisposable
         if (!element.Bounds.IsEmpty)
         {
             step.ElementArea = RectI.From(work.Frame.ToImageRect(element.Bounds));
+        }
+
+        if (!element.WindowBounds.IsEmpty)
+        {
+            step.WindowArea = RectI.From(work.Frame.ToImageRect(element.WindowBounds));
         }
 
         if (secret)

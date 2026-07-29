@@ -45,11 +45,25 @@ public sealed class AppSettings
     /// <summary>When true the shortcuts also need Ctrl and Shift, which avoids clashes with other tools.</summary>
     public bool HotkeyNeedsModifiers { get; set; }
 
-    // Optional writing assistant, any endpoint that speaks the OpenAI chat completions shape.
+    // Optional writing assistant.
     public bool AiEnabled { get; set; }
+
+    /// <summary>One of the identifiers in <see cref="AiProviders"/>.</summary>
+    public string AiProvider { get; set; } = "openai";
+
     public string AiBaseUrl { get; set; } = "https://api.openai.com/v1";
     public string AiModel { get; set; } = "gpt-4o-mini";
     public string AiKeyProtected { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Lets the assistant look at the screenshot for each step, which is what makes it able
+    /// to name what is actually on screen. Off by default, because pictures leaving the
+    /// machine is a decision the person has to make on purpose.
+    /// </summary>
+    public bool AiSendScreenshots { get; set; }
+
+    /// <summary>Ask the assistant to add a short note under a step where one genuinely helps.</summary>
+    public bool AiWriteNotes { get; set; } = true;
 
     public string LibraryFolder { get; set; } = DefaultLibraryFolder;
 

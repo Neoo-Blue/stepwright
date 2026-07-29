@@ -22,6 +22,9 @@ public sealed class ElementInfo
     /// <summary>Bounds in physical screen pixels. Empty when the platform gave nothing usable.</summary>
     public Rectangle Bounds { get; set; }
 
+    /// <summary>The whole window the control belongs to, in physical screen pixels.</summary>
+    public Rectangle WindowBounds { get; set; }
+
     public bool HasName => !string.IsNullOrWhiteSpace(Name);
 }
 
@@ -125,6 +128,15 @@ public static class UiInspector
             info.WindowTitle = NativeMethods.GetWindowTitle(root);
             info.ClassName = NativeMethods.GetWindowClass(hwnd);
 
+            if (root != IntPtr.Zero && NativeMethods.GetWindowRect(root, out NativeMethods.RECT area))
+            {
+                info.WindowBounds = new Rectangle(
+                    area.Left,
+                    area.Top,
+                    Math.Max(0, area.Right - area.Left),
+                    Math.Max(0, area.Bottom - area.Top));
+            }
+
             if (root != IntPtr.Zero)
             {
                 NativeMethods.GetWindowThreadProcessId(root, out uint pid);
@@ -179,6 +191,12 @@ public static class UiInspector
                 ControlType type = current.ControlType;
                 info.IsTextField = Equals(type, ControlType.Edit) || Equals(type, ControlType.Document) || Equals(type, ControlType.ComboBox);
 
+                // A control that just repeats the window title tells the reader nothing.
+                if (LooksLikeWindowTitle(info.Name, info.WindowTitle))
+                {
+                    info.Name = string.Empty;
+                }
+
                 if (!info.HasName || info.Name.Length > 120)
                 {
                     ClimbForContext(info, element);
@@ -201,6 +219,12 @@ public static class UiInspector
             for (int depth = 0; depth < 4 && cursor is not null; depth++)
             {
                 string name = Clean(cursor.Current.Name);
+                if (LooksLikeWindowTitle(name, info.WindowTitle))
+                {
+                    // Climbing has reached the window itself, so there is no better name above.
+                    return;
+                }
+
                 if (!string.IsNullOrWhiteSpace(name) && name.Length <= 120)
                 {
                     if (!info.HasName)
@@ -294,6 +318,32 @@ public static class UiInspector
                 return string.Empty;
             }
         }
+    }
+
+    /// <summary>
+    /// True when a control name is really just the window title. A browser reports the page
+    /// title on several of its containers, and repeating it back reads as noise.
+    /// </summary>
+    private static bool LooksLikeWindowTitle(string name, string windowTitle)
+    {
+        if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(windowTitle))
+        {
+            return false;
+        }
+
+        string left = name.Trim();
+        string right = windowTitle.Trim();
+
+        if (string.Equals(left, right, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        // Window titles carry the application on the end, so a control named after the first
+        // part of the title counts too.
+        return left.Length >= 12
+            && (right.StartsWith(left, StringComparison.OrdinalIgnoreCase)
+                || left.StartsWith(right, StringComparison.OrdinalIgnoreCase));
     }
 
     private static string Clean(string? value)

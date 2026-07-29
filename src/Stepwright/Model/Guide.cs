@@ -103,6 +103,10 @@ public sealed class Step
 
     public PointI? ClickPoint { get; set; }
     public RectI? ElementArea { get; set; }
+
+    /// <summary>The window that was in use, so the picture can be cropped back to it.</summary>
+    public RectI? WindowArea { get; set; }
+
     public RectI? Crop { get; set; }
 
     public bool ShowClickMarker { get; set; } = true;
@@ -136,6 +140,7 @@ public sealed class Step
             Image = Image,
             ClickPoint = ClickPoint,
             ElementArea = ElementArea,
+            WindowArea = WindowArea,
             Crop = Crop,
             ShowClickMarker = ShowClickMarker,
             ShowElementOutline = ShowElementOutline,

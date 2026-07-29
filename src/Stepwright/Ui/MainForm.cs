@@ -32,9 +32,11 @@ public sealed class MainForm : Form
     private readonly ToolStripLabel _toolLabel = new();
 
     private readonly List<ToolStripButton> _toolButtons = new();
-    private readonly ToolStripButton _markerToggle = new();
-    private readonly ToolStripButton _outlineToggle = new();
-    private readonly ToolStripButton _zoomToggle = new();
+    private readonly List<ToolStripButton> _variantButtons = new();
+    private CropVariant _lastVariant = CropVariant.Focus;
+    private readonly ToolStripMenuItem _markerToggle = new();
+    private readonly ToolStripMenuItem _outlineToggle = new();
+    private readonly ToolStripMenuItem _zoomToggle = new();
 
     private Guide _guide = new();
     private SplitContainer? _split;
@@ -147,8 +149,8 @@ public sealed class MainForm : Form
         strip.Items.Add(Button("Add heading", "Start a new section", (_, _) => InsertStep(StepKind.Heading)));
         strip.Items.Add(new ToolStripSeparator());
 
-        _polishButton.Text = "Polish with AI";
-        _polishButton.ToolTipText = "Rewrite every step with the writing assistant";
+        _polishButton.Text = "Improve with AI";
+        _polishButton.ToolTipText = "Rewrite every step, and add notes, with the assistant";
         _polishButton.Click += async (_, _) => await PolishAsync().ConfigureAwait(true);
         strip.Items.Add(_polishButton);
 
@@ -175,24 +177,35 @@ public sealed class MainForm : Form
 
     private Control BuildLibraryPanel()
     {
-        var panel = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Panel, Padding = new Padding(12, 10, 12, 10) };
-
-        var header = new Panel { Dock = DockStyle.Top, Height = 118, BackColor = Theme.Panel };
-
-        var titleLabel = new Label
+        var panel = new Panel
         {
-            Text = "Guide title",
-            ForeColor = Theme.Muted,
-            Bounds = new Rectangle(0, 0, 200, 16),
-            Font = Theme.UiSmall,
+            Dock = DockStyle.Fill,
+            BackColor = Theme.Panel,
+            Padding = new Padding(12, 12, 12, 6),
         };
 
-        _title.Bounds = new Rectangle(0, 18, 340, 26);
+        // A table rather than fixed positions, so a label can never be clipped and the
+        // whole thing follows the font size the display is using.
+        var header = new TableLayoutPanel
+        {
+            Dock = DockStyle.Top,
+            ColumnCount = 1,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            BackColor = Theme.Panel,
+            Margin = new Padding(0),
+            Padding = new Padding(0, 0, 0, 8),
+        };
+
+        header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+
+        _title.Multiline = false;
         _title.BorderStyle = BorderStyle.FixedSingle;
         _title.BackColor = Theme.Raised;
         _title.ForeColor = Theme.Text;
-        _title.Font = new Font("Segoe UI", 10.5f, FontStyle.Regular);
-        _title.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+        _title.Font = new Font(Theme.Ui.FontFamily, 10.5f);
+        _title.Dock = DockStyle.Fill;
+        _title.Margin = new Padding(0, 2, 0, 10);
         _title.TextChanged += (_, _) =>
         {
             if (_loading)
@@ -204,20 +217,13 @@ public sealed class MainForm : Form
             MarkDirty();
         };
 
-        var summaryLabel = new Label
-        {
-            Text = "Summary",
-            ForeColor = Theme.Muted,
-            Bounds = new Rectangle(0, 52, 200, 16),
-            Font = Theme.UiSmall,
-        };
-
-        _summary.Bounds = new Rectangle(0, 70, 340, 40);
         _summary.Multiline = true;
+        _summary.Height = 46;
         _summary.BorderStyle = BorderStyle.FixedSingle;
         _summary.BackColor = Theme.Raised;
         _summary.ForeColor = Theme.Text;
-        _summary.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+        _summary.Dock = DockStyle.Fill;
+        _summary.Margin = new Padding(0, 2, 0, 0);
         _summary.TextChanged += (_, _) =>
         {
             if (_loading)
@@ -229,9 +235,9 @@ public sealed class MainForm : Form
             MarkDirty();
         };
 
-        header.Controls.Add(titleLabel);
+        header.Controls.Add(Caption("Guide title"));
         header.Controls.Add(_title);
-        header.Controls.Add(summaryLabel);
+        header.Controls.Add(Caption("Summary"));
         header.Controls.Add(_summary);
 
         _list.Dock = DockStyle.Fill;
@@ -252,6 +258,7 @@ public sealed class MainForm : Form
             Renderer = new ThemeRenderer(),
             BackColor = Theme.Panel,
             Padding = new Padding(0, 4, 0, 4),
+            CanOverflow = false,
         };
 
         listTools.Items.Add(Button("Up", "Move this step earlier", (_, _) => MoveStep(-1)));
@@ -267,46 +274,57 @@ public sealed class MainForm : Form
         return panel;
     }
 
+    /// <summary>A small label above a field, sized by its own text so it cannot be cut off.</summary>
+    private static Label Caption(string text) => new()
+    {
+        Text = text,
+        AutoSize = true,
+        ForeColor = Theme.Muted,
+        Font = Theme.UiSmall,
+        Margin = new Padding(1, 0, 0, 0),
+        BackColor = Color.Transparent,
+    };
+
     private Control BuildStepEditor()
     {
         var panel = new Panel
         {
             Dock = DockStyle.Top,
-            Height = 132,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
             BackColor = Theme.Window,
-            Padding = new Padding(14, 10, 14, 6),
+            Padding = new Padding(14, 10, 14, 10),
         };
 
-        var stepLabel = new Label
+        var table = new TableLayoutPanel
         {
-            Text = "Step text",
-            ForeColor = Theme.Muted,
-            Font = Theme.UiSmall,
-            Bounds = new Rectangle(14, 6, 200, 16),
+            Dock = DockStyle.Top,
+            ColumnCount = 1,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            BackColor = Theme.Window,
+            Margin = new Padding(0),
         };
 
-        _stepText.Bounds = new Rectangle(14, 24, 600, 46);
+        table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+
         _stepText.Multiline = true;
+        _stepText.Height = 52;
         _stepText.BorderStyle = BorderStyle.FixedSingle;
         _stepText.BackColor = Theme.Raised;
         _stepText.ForeColor = Theme.Text;
-        _stepText.Font = new Font("Segoe UI", 10.5f, FontStyle.Regular);
-        _stepText.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+        _stepText.Font = new Font(Theme.Ui.FontFamily, 10.5f);
+        _stepText.Dock = DockStyle.Fill;
+        _stepText.Margin = new Padding(0, 2, 0, 10);
         _stepText.TextChanged += OnStepTextChanged;
 
-        var notesLabel = new Label
-        {
-            Text = "Extra note, shown under the step",
-            ForeColor = Theme.Muted,
-            Font = Theme.UiSmall,
-            Bounds = new Rectangle(14, 76, 300, 16),
-        };
-
-        _stepNotes.Bounds = new Rectangle(14, 94, 600, 26);
+        _stepNotes.Multiline = true;
+        _stepNotes.Height = 40;
         _stepNotes.BorderStyle = BorderStyle.FixedSingle;
         _stepNotes.BackColor = Theme.Raised;
         _stepNotes.ForeColor = Theme.Text;
-        _stepNotes.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+        _stepNotes.Dock = DockStyle.Fill;
+        _stepNotes.Margin = new Padding(0, 2, 0, 0);
         _stepNotes.TextChanged += (_, _) =>
         {
             if (_loading || SelectedStep is not { } step)
@@ -318,10 +336,12 @@ public sealed class MainForm : Form
             MarkDirty();
         };
 
-        panel.Controls.Add(stepLabel);
-        panel.Controls.Add(_stepText);
-        panel.Controls.Add(notesLabel);
-        panel.Controls.Add(_stepNotes);
+        table.Controls.Add(Caption("Step text"));
+        table.Controls.Add(_stepText);
+        table.Controls.Add(Caption("Note, shown under the step"));
+        table.Controls.Add(_stepNotes);
+
+        panel.Controls.Add(table);
         return panel;
     }
 
@@ -334,16 +354,27 @@ public sealed class MainForm : Form
             Renderer = new ThemeRenderer(),
             BackColor = Theme.Panel,
             Padding = new Padding(8, 4, 8, 4),
+            CanOverflow = false,
         };
+
+        var framing = new ToolStripLabel("Framing") { ForeColor = Theme.Muted };
+        strip.Items.Add(framing);
+
+        AddVariant(strip, "Full", CropVariant.Full, "The whole screen as it was captured");
+        AddVariant(strip, "Window", CropVariant.Window, "Just the window that was in use");
+        AddVariant(strip, "Focus", CropVariant.Focus, "Around the control, with room to see where it sits");
+        AddVariant(strip, "Close", CropVariant.Close, "Tight on the control");
+
+        strip.Items.Add(new ToolStripSeparator());
 
         AddTool(strip, "Select", CanvasTool.Select, "Click a callout to remove it");
         AddTool(strip, "Box", CanvasTool.Box, "Draw a box");
         AddTool(strip, "Arrow", CanvasTool.Arrow, "Draw an arrow");
-        AddTool(strip, "Highlight", CanvasTool.Highlight, "Highlight an area");
+        AddTool(strip, "Mark", CanvasTool.Highlight, "Highlight an area");
         AddTool(strip, "Blur", CanvasTool.Blur, "Hide sensitive information");
         AddTool(strip, "Label", CanvasTool.Text, "Place a text label");
-        AddTool(strip, "Crop", CanvasTool.Crop, "Keep only part of the picture");
-        AddTool(strip, "Marker", CanvasTool.Marker, "Move the click marker");
+        AddTool(strip, "Crop", CanvasTool.Crop, "Draw your own crop");
+        AddTool(strip, "Point", CanvasTool.Marker, "Move the click marker");
 
         strip.Items.Add(new ToolStripSeparator());
 
@@ -353,6 +384,7 @@ public sealed class MainForm : Form
             Image = Dot(_drawColor),
             ImageScaling = ToolStripItemImageScaling.None,
         };
+
         colour.Click += (_, _) =>
         {
             using var dialog = new ColorDialog { Color = _drawColor, FullOpen = true };
@@ -363,19 +395,29 @@ public sealed class MainForm : Form
                 SetDot(colour, _drawColor);
             }
         };
+
         strip.Items.Add(colour);
 
-        strip.Items.Add(Button("Clear callouts", "Remove every callout from this step", (_, _) => ClearAnnotations()));
-        strip.Items.Add(Button("Reset crop", "Show the whole screenshot again", (_, _) => ResetCrop()));
+        var more = new ToolStripDropDownButton("Options")
+        {
+            ShowDropDownArrow = true,
+        };
 
-        strip.Items.Add(new ToolStripSeparator());
+        more.DropDown.Renderer = new ThemeRenderer();
+        more.DropDown.BackColor = Theme.Panel;
 
-        SetUpToggle(_markerToggle, "Click marker", (step, on) => step.ShowClickMarker = on);
-        SetUpToggle(_outlineToggle, "Outline", (step, on) => step.ShowElementOutline = on);
-        SetUpToggle(_zoomToggle, "Auto zoom", (step, on) => step.AutoZoom = on);
-        strip.Items.Add(_markerToggle);
-        strip.Items.Add(_outlineToggle);
-        strip.Items.Add(_zoomToggle);
+        SetUpToggle(_markerToggle, "Show the click marker", (step, on) => step.ShowClickMarker = on);
+        SetUpToggle(_outlineToggle, "Outline the control", (step, on) => step.ShowElementOutline = on);
+        SetUpToggle(_zoomToggle, "Zoom automatically", (step, on) => step.AutoZoom = on);
+
+        more.DropDownItems.Add(_markerToggle);
+        more.DropDownItems.Add(_outlineToggle);
+        more.DropDownItems.Add(_zoomToggle);
+        more.DropDownItems.Add(new ToolStripSeparator());
+        more.DropDownItems.Add(Item("Clear every callout on this step", (_, _) => ClearAnnotations()));
+        more.DropDownItems.Add(Item("Apply this framing to every step", (_, _) => ApplyFramingToAll()));
+
+        strip.Items.Add(more);
 
         strip.Items.Add(new ToolStripSeparator());
         _toolLabel.ForeColor = Theme.Muted;
@@ -383,6 +425,110 @@ public sealed class MainForm : Form
         strip.Items.Add(_toolLabel);
 
         return strip;
+    }
+
+    private void AddVariant(ToolStrip strip, string text, CropVariant variant, string tip)
+    {
+        var button = new ToolStripButton(text) { ToolTipText = tip, Tag = variant };
+        button.Click += (_, _) => ApplyVariant(variant);
+        _variantButtons.Add(button);
+        strip.Items.Add(button);
+    }
+
+    /// <summary>Reframes the selected step, and remembers the choice for the next step shown.</summary>
+    private void ApplyVariant(CropVariant variant)
+    {
+        _lastVariant = variant;
+        ShowVariantChoice(variant);
+
+        if (SelectedStep is not { } step || !step.HasImage)
+        {
+            return;
+        }
+
+        ApplyVariantTo(step, variant);
+        MarkDirty();
+        RefreshPreview();
+        DropThumbnail(step);
+        _list.Invalidate();
+    }
+
+    private void ApplyVariantTo(Step step, CropVariant variant)
+    {
+        if (variant == CropVariant.Focus)
+        {
+            // Focus stays live, so a later change of padding still applies.
+            step.Crop = null;
+            step.AutoZoom = true;
+        }
+        else if (variant == CropVariant.Full)
+        {
+            step.Crop = null;
+            step.AutoZoom = false;
+        }
+        else
+        {
+            Size size = SourceSize(step);
+            if (size.IsEmpty)
+            {
+                return;
+            }
+
+            step.Crop = RectI.From(StepRenderer.VariantCrop(step, size, variant, _settings.ZoomPadding));
+            step.AutoZoom = false;
+        }
+
+        _loading = true;
+        _zoomToggle.Checked = step.AutoZoom;
+        _loading = false;
+    }
+
+    private void ApplyFramingToAll()
+    {
+        if (_guide.Steps.Count == 0)
+        {
+            return;
+        }
+
+        foreach (Step step in _guide.Steps.Where(s => s.HasImage))
+        {
+            ApplyVariantTo(step, _lastVariant);
+            DropThumbnail(step);
+        }
+
+        MarkDirty();
+        RefreshPreview();
+        _list.Invalidate();
+        Status($"Every step now uses the {_lastVariant.ToString().ToLowerInvariant()} framing.");
+    }
+
+    /// <summary>Reads the size of the untouched screenshot behind a step.</summary>
+    private Size SourceSize(Step step)
+    {
+        string path = _guide.ImagePath(step);
+        if (string.IsNullOrEmpty(path) || !File.Exists(path))
+        {
+            return Size.Empty;
+        }
+
+        try
+        {
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+            using Image image = Image.FromStream(stream, useEmbeddedColorManagement: false, validateImageData: false);
+            return image.Size;
+        }
+        catch
+        {
+            return Size.Empty;
+        }
+    }
+
+    private void ShowVariantChoice(CropVariant? variant)
+    {
+        foreach (ToolStripButton button in _variantButtons)
+        {
+            button.Checked = variant is not null && (CropVariant)button.Tag! == variant;
+        }
     }
 
     private StatusStrip BuildStatusBar()
@@ -430,7 +576,7 @@ public sealed class MainForm : Form
         strip.Items.Add(button);
     }
 
-    private void SetUpToggle(ToolStripButton button, string text, Action<Step, bool> apply)
+    private void SetUpToggle(ToolStripMenuItem button, string text, Action<Step, bool> apply)
     {
         button.Text = text;
         button.CheckOnClick = true;
@@ -878,8 +1024,26 @@ public sealed class MainForm : Form
         _outlineToggle.Enabled = hasImage;
         _zoomToggle.Enabled = hasImage;
 
+        foreach (ToolStripButton button in _variantButtons)
+        {
+            button.Enabled = hasImage;
+        }
+
+        ShowVariantChoice(step is null ? null : CurrentVariant(step));
+
         _loading = false;
         RefreshPreview();
+    }
+
+    /// <summary>Works out which of the ready made framings a step is currently using.</summary>
+    private static CropVariant? CurrentVariant(Step step)
+    {
+        if (step.Crop is null)
+        {
+            return step.AutoZoom ? CropVariant.Focus : CropVariant.Full;
+        }
+
+        return null;
     }
 
     private void OnStepTextChanged(object? sender, EventArgs e)
@@ -1705,9 +1869,17 @@ public sealed class MainForm : Form
 
     private async Task PolishAsync()
     {
-        if (!_settings.AiEnabled || !_settings.HasAiKey)
+        if (!_settings.AiEnabled)
         {
-            Warn("Turn on the writing assistant in Settings first, and give it an endpoint and a key.");
+            Warn("Turn the assistant on in Settings first, then choose a service and paste a key.");
+            OpenSettings();
+            return;
+        }
+
+        if (!_settings.HasAiKey && !_settings.AiBaseUrl.Contains("localhost", StringComparison.OrdinalIgnoreCase))
+        {
+            Warn("The assistant needs a key. Add one in Settings.");
+            OpenSettings();
             return;
         }
 
@@ -1722,10 +1894,40 @@ public sealed class MainForm : Form
         try
         {
             var progress = new Progress<string>(Status);
-            using var cancel = new CancellationTokenSource(TimeSpan.FromMinutes(5));
+            using var cancel = new CancellationTokenSource(TimeSpan.FromMinutes(20));
+
+            // The pictures are prepared together on a worker, so the window stays responsive
+            // and the assistant is never waiting on the drawing code.
+            var pictures = new Dictionary<string, byte[]>(StringComparer.Ordinal);
+            if (_settings.AiSendScreenshots)
+            {
+                Status("Preparing the screenshots...");
+                Guide guide = _guide;
+                AppSettings settings = _settings;
+
+                pictures = await Task.Run(() =>
+                {
+                    var built = new Dictionary<string, byte[]>(StringComparer.Ordinal);
+                    foreach (Step step in guide.Steps.Where(s => s.HasImage))
+                    {
+                        byte[]? picture = GuideRenderer.RenderJpeg(guide, step, settings, 1100, 72);
+                        if (picture is not null)
+                        {
+                            built[step.Id] = picture;
+                        }
+                    }
+
+                    return built;
+                }).ConfigureAwait(true);
+            }
 
             int changed = await AiPolisher
-                .PolishAsync(_guide, _settings, progress, cancel.Token)
+                .ImproveAsync(
+                    _guide,
+                    _settings,
+                    step => pictures.TryGetValue(step.Id, out byte[]? picture) ? picture : null,
+                    progress,
+                    cancel.Token)
                 .ConfigureAwait(true);
 
             if (string.IsNullOrWhiteSpace(_guide.Title) || _guide.Title == "Untitled guide")
@@ -1745,7 +1947,9 @@ public sealed class MainForm : Form
             _list.Invalidate();
             LoadSelectedStep();
             MarkDirty();
-            Status(changed == 0 ? "The assistant left every step as it was." : $"The assistant rewrote {changed} steps.");
+            Status(changed == 0
+                ? "The assistant left every step as it was."
+                : $"The assistant rewrote {changed} steps.");
         }
         catch (Exception error)
         {

@@ -11,7 +11,19 @@ public static class StepTextBuilder
 {
     private static readonly HashSet<string> VagueTypes = new(StringComparer.OrdinalIgnoreCase)
     {
-        "pane", "custom", "group", "window", "document", "unknown", "client", "dialog", "form", "toolbar", "",
+        "pane", "custom", "group", "window", "document", "unknown", "client", "dialog", "form",
+        "toolbar", "region", "section", "generic", "grouping", "landmark", "",
+    };
+
+    /// <summary>
+    /// Endings a browser or a document application adds to its window title. They are noise
+    /// in a step, because the application is named separately.
+    /// </summary>
+    private static readonly string[] TitleTails =
+    {
+        " and Google Chrome", " Google Chrome", " Mozilla Firefox", " Microsoft Edge",
+        " Personal Microsoft Edge", " Work Microsoft Edge", " Brave", " Opera", " Microsoft Word",
+        " Microsoft Excel", " Microsoft PowerPoint", " Visual Studio Code",
     };
 
     public static string Describe(StepKind kind, ElementInfo element, string appContext, string extra = "")
@@ -107,10 +119,38 @@ public static class StepTextBuilder
 
         if (!string.IsNullOrWhiteSpace(element.WindowTitle))
         {
-            return Shorten(element.WindowTitle, 40);
+            return Shorten(TrimTitle(element.WindowTitle), 40);
         }
 
         return string.Empty;
+    }
+
+    /// <summary>Removes the application name a window title carries on the end.</summary>
+    public static string TrimTitle(string title)
+    {
+        string clean = title.Trim();
+
+        // Titles arrive with several separators, so they are levelled first.
+        string flat = clean.Replace(" — ", " ", StringComparison.Ordinal)
+            .Replace(" – ", " ", StringComparison.Ordinal)
+            .Replace(" - ", " ", StringComparison.Ordinal);
+
+        foreach (string tail in TitleTails)
+        {
+            if (flat.EndsWith(tail, StringComparison.OrdinalIgnoreCase))
+            {
+                flat = flat[..^tail.Length].TrimEnd();
+                break;
+            }
+        }
+
+        int more = flat.IndexOf(" and ", StringComparison.OrdinalIgnoreCase);
+        if (more > 12 && flat.EndsWith("more pages", StringComparison.OrdinalIgnoreCase))
+        {
+            flat = flat[..more].TrimEnd();
+        }
+
+        return flat.Length == 0 ? clean : flat;
     }
 
     public static string Shorten(string value, int max)

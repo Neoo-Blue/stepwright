@@ -5,6 +5,22 @@ using Stepwright.Model;
 
 namespace Stepwright.Render;
 
+/// <summary>The framings a person can pick between for a step.</summary>
+public enum CropVariant
+{
+    /// <summary>The whole screen as it was captured.</summary>
+    Full,
+
+    /// <summary>Just the window that was being used.</summary>
+    Window,
+
+    /// <summary>Around the control that was used, with room to see where it sits.</summary>
+    Focus,
+
+    /// <summary>Tight on the control, for when the detail is small.</summary>
+    Close,
+}
+
 /// <summary>Draws the finished picture for a step: crop, redactions, callouts and the click marker.</summary>
 public static class StepRenderer
 {
@@ -70,17 +86,9 @@ public static class StepRenderer
         }
 
         Rectangle anchor = Rectangle.Empty;
-        if (step.ElementArea is { } area && !area.IsEmpty)
+        if (step.ElementArea is { } area && IsUsefulElement(area.Rect, imageSize, step.ClickPoint, 0.72))
         {
-            Rectangle candidate = area.Rect;
-            bool sane = candidate.Width > 4
-                && candidate.Height > 4
-                && candidate.Width < imageSize.Width * 0.72
-                && candidate.Height < imageSize.Height * 0.72;
-            if (sane)
-            {
-                anchor = candidate;
-            }
+            anchor = area.Rect;
         }
 
         if (anchor.IsEmpty && step.ClickPoint is { } click)
@@ -164,7 +172,12 @@ public static class StepRenderer
                 Pixelate(graphics, source, area, crop);
             }
 
-            if (step.ShowElementOutline && step.ElementArea is { } element && !element.IsEmpty)
+            // An outline is drawn only when it genuinely marks the control that was used.
+            // A pane covering the whole page would otherwise show up as a stray line across
+            // the picture, which is worse than no outline at all.
+            if (step.ShowElementOutline
+                && step.ElementArea is { } element
+                && IsUsefulElement(element.Rect, source.Size, step.ClickPoint, 0.55))
             {
                 DrawElementOutline(graphics, Shift(element.Rect, crop), Parse(markerColorHex, Color.OrangeRed));
             }
@@ -184,6 +197,89 @@ public static class StepRenderer
         }
 
         return output;
+    }
+
+    /// <summary>
+    /// True when a reported control rectangle is worth showing: a sensible size, not most of
+    /// the screen, and actually containing the point that was clicked.
+    /// </summary>
+    public static bool IsUsefulElement(Rectangle area, Size imageSize, PointI? click, double maxShare)
+    {
+        if (area.Width <= 6 || area.Height <= 6)
+        {
+            return false;
+        }
+
+        if (area.Width > imageSize.Width * maxShare && area.Height > imageSize.Height * maxShare)
+        {
+            return false;
+        }
+
+        if (area.Width >= imageSize.Width * 0.98 || area.Height >= imageSize.Height * 0.98)
+        {
+            return false;
+        }
+
+        if (click is { } point)
+        {
+            Rectangle slack = Rectangle.Inflate(area, 6, 6);
+            if (!slack.Contains(point.Point))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>Works out the region for one of the ready made framings.</summary>
+    public static Rectangle VariantCrop(Step step, Size imageSize, CropVariant variant, int padding)
+    {
+        var full = new Rectangle(Point.Empty, imageSize);
+
+        switch (variant)
+        {
+            case CropVariant.Window:
+            {
+                if (step.WindowArea is { } window && !window.IsEmpty)
+                {
+                    Rectangle area = Rectangle.Intersect(window.Rect, full);
+                    if (area.Width > 200 && area.Height > 150)
+                    {
+                        return area;
+                    }
+                }
+
+                return full;
+            }
+
+            case CropVariant.Focus:
+            {
+                var probe = new Step
+                {
+                    ClickPoint = step.ClickPoint,
+                    ElementArea = step.ElementArea,
+                    AutoZoom = true,
+                };
+
+                return EffectiveCrop(probe, imageSize, padding);
+            }
+
+            case CropVariant.Close:
+            {
+                var probe = new Step
+                {
+                    ClickPoint = step.ClickPoint,
+                    ElementArea = step.ElementArea,
+                    AutoZoom = true,
+                };
+
+                return EffectiveCrop(probe, imageSize, Math.Max(60, padding / 3));
+            }
+
+            default:
+                return full;
+        }
     }
 
     private static Rectangle Shift(Rectangle rect, Rectangle crop) =>

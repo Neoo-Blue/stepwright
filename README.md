@@ -20,7 +20,8 @@ browser extension.
 | PDF, Word and Markdown export | included | paid tier |
 | Blur and redact | included, plus automatic password blanking | paid tier |
 | Works with no internet | yes | no |
-| Writing assistant | optional, points at any endpoint you choose, including your own | their model only |
+| Writing assistant | optional, and you pick the service: GPT, Claude, Gemini or your own | their model only |
+| Screenshot framing | four framings per step, switchable after recording | one |
 
 ## How it works
 
@@ -28,8 +29,10 @@ browser extension.
 2. Do the task once. A small bar floats on top with a timer, a step count and a Finish button.
    Windows is asked to leave that bar out of every screenshot, so it never appears in the guide.
 3. Press **Finish**. Every step is already written and illustrated.
-4. Edit anything: reword a step, reorder, merge, hide a step, crop, blur, add arrows and labels.
-5. Export.
+4. Pick how each screenshot is framed: the whole screen, just the window, around the control,
+   or tight on it. One click, and you can apply the same choice to every step at once.
+5. Edit anything: reword a step, reorder, merge, hide a step, crop, blur, add arrows and labels.
+6. Export.
 
 ## What gets recorded
 
@@ -89,9 +92,22 @@ Two safety nets are on by default:
 * You can add your own patterns in Settings, and anything matching them is replaced before it
   reaches a step
 
-The optional writing assistant is off until you turn it on. When it is on, only the step text
-and control names are sent to the endpoint you configured. Screenshots are never sent. The key
-is stored encrypted for your Windows account with the platform data protection interface.
+## The assistant
+
+Off until you turn it on. Pick a service in Settings and the address and model fill themselves
+in: OpenAI for the GPT models, Anthropic for Claude, Google for Gemini, or anything that speaks
+the OpenAI shape, which covers your own gateway and a local model. The key is stored encrypted
+for your Windows account with the platform data protection interface.
+
+It rewrites the wording of every step and adds a short note where one genuinely helps.
+
+There is a second switch: **let the assistant see each screenshot**. It is off by default, and
+it is the one that changes the quality dramatically. The recorder can only name a control as
+well as the application describes itself, which inside a browser is often not at all, which is
+how you end up with a step that says "Click Omnibox Popup". When the assistant can see the
+picture, with the click marked on it, it names what is actually there. With this off, only the
+step text and control names are sent. With it on, the picture for each step goes to the service
+you chose, and nowhere else.
 
 ## Install
 
@@ -100,6 +116,25 @@ runtime needed, because the self contained build carries everything with it.
 
 `Stepwright.small.exe` in the same release is a few hundred kilobytes instead of sixty
 megabytes, for machines that already have the .NET 8 desktop runtime.
+
+## The warning Windows shows
+
+Windows warns about any program it has not seen before. Stepwright is not signed by default,
+because a certificate that removes the warning has to be bought from a certificate authority
+and tied to a named person or company.
+
+What each option actually does:
+
+* **A certificate from a certificate authority.** Removes "Unknown publisher" for everyone.
+  An extended validation certificate also skips the SmartScreen reputation wait. Add it as the
+  `SIGNING_CERT_BASE64` and `SIGNING_CERT_PASSWORD` repository secrets and every build signs
+  itself from then on, with no other change needed.
+* **A self signed certificate.** Removes the warning only on machines that have been told to
+  trust it. That is the right answer for a fleet you manage, since you can push the certificate
+  by policy. It does nothing for someone downloading the file from the internet.
+  `tools/sign.ps1 -Create` makes one, and `-TrustOnThisMachine` trusts it locally.
+* **Nothing.** Choose "More info" then "Run anyway" the first time. The warning fades once
+  enough people have run the same file.
 
 ### Notes
 
