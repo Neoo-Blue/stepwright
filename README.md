@@ -143,10 +143,18 @@ Publish, then Hudu or Confluence. The guide goes across as an article with no fi
   space and, if you want, a page to file it under.
 
 Set both up under Settings, on the Publishing page. Hudu needs the address of your site and an
-API key from Admin then API. Confluence needs the address, the email you sign in with, and an
-API token from your Atlassian account security page. Each has a button that proves the
-connection before you rely on it. The secrets are encrypted for your Windows account on
-Windows, and kept in the keychain on macOS.
+API key from Admin then API, which is the only thing its API accepts. Confluence takes either
+the email you sign in with plus an API token, or a browser sign in.
+
+To sign in through the browser, register an application once in the Atlassian developer
+console, give it the Confluence permissions, and add `http://localhost:53682/callback` as its
+callback address. Put the identifier and the secret into Settings and press **Sign in to
+Atlassian**: the browser asks you, the answer comes back to Stepwright, and from then on it
+renews itself without asking again. Atlassian issues these tokens to a named application, which
+is why the application has to be yours rather than one shipped inside the app.
+
+Each has a button that proves the connection before you rely on it. The secrets are encrypted
+for your Windows account on Windows, and kept in the keychain on macOS.
 
 ### Steps without a picture
 
@@ -195,6 +203,34 @@ for your Windows account with the platform data protection interface.
 Press **Find models** and Stepwright asks that service which models your key is actually allowed
 to use, then fills the list. You can still type a name yourself.
 
+### Using a subscription you already pay for
+
+**How it signs in** offers a second route. If you already pay for Claude Pro or Max, ChatGPT
+Plus, or you have a Google account, the command line app that comes with that plan is already
+signed in on your machine, and Stepwright can put its questions to that instead of to a key
+billed by the token.
+
+| Service | The app it runs | What pays for it |
+| --- | --- | --- |
+| Anthropic | `claude` | Claude Pro or Claude Max |
+| OpenAI | `codex` | ChatGPT Plus, Pro, Business or Enterprise |
+| Google | `gemini` | a Google account, or Gemini Code Assist |
+
+Install the app, run it once in a terminal and sign in, then choose that route in Settings and
+press **Check the app**. Stepwright looks along the search path and in the usual install
+folders, and there is a box for the path when yours lives somewhere unusual. Nothing is stored
+here: the app holds its own sign in, and any key sitting in the environment is deliberately
+kept out of the child process so the work cannot land on paid billing by accident.
+
+Leave the model empty to use whatever that app is already set to. The screenshot switch still
+works: each picture is written into a folder that is deleted afterwards, and the app is asked
+to open it, which costs an extra moment per step compared with the key route.
+
+There is a third route, marked advanced, that sends a Claude subscription token straight to the
+service. It is faster, and it is outside the terms of a consumer plan, since those tokens are
+issued for the vendor's own app. Accounts have been suspended for it. The first two routes are
+the ones to use.
+
 It rewrites the wording of every step and adds a short note where one genuinely helps.
 
 There is a second switch: **let the assistant see each screenshot**. It is off by default, and
@@ -204,6 +240,22 @@ how you end up with a step that says "Click Omnibox Popup". When the assistant c
 picture, with the click marked on it, it names what is actually there. With this off, only the
 step text and control names are sent. With it on, the picture for each step goes to the service
 you chose, and nowhere else.
+
+### Recording inside a remote session
+
+Remote Desktop, ScreenConnect, Splashtop, TeamViewer, AnyDesk and the rest all show the far
+machine as a picture inside a window. There is no accessibility tree behind that picture, so
+nothing inside it can be named, and the only thing the system will report is the viewer's own
+window title, complete with its version, its session number and a clock that ticks every
+second.
+
+Stepwright recognises those applications and refuses to pass any of that off as the name of a
+control. A step recorded in one reads "Click the highlighted spot in AZ-UTILITY01 through
+ScreenConnect", with the far machine named the same way on every step.
+
+This is the case the picture switch was built for. Turn on **let the assistant see each
+screenshot** and the assistant reads the pixels, which is the only thing that can name a button
+on the far side.
 
 ## Install
 
@@ -398,6 +450,7 @@ mac/Stepwright/Sources
   Exporters.swift   web page, markdown and the guide file format
   PdfExport.swift   the document, drawn by the platform
   Assistant.swift   the optional writing pass
+  Agents.swift      the signed in command line apps a subscription can be reached through
   Views.swift       the preview, the step rows and the floating bar
   MainWindow.swift  the editor
 ```

@@ -211,14 +211,15 @@ public sealed class PublishForm : Form
             {
                 if (!_settings.HasConfluence)
                 {
-                    Say("Confluence is not set up yet. Add the address, your email and a token under Settings.", Theme.Record);
+                    Say(
+                        _settings.ConfluenceUsesOAuth
+                            ? "Confluence is not signed in yet. Sign in to Atlassian under Settings."
+                            : "Confluence is not set up yet. Add the address, your email and a token under Settings.",
+                        Theme.Record);
                     return;
                 }
 
-                _confluence = new ConfluenceClient(
-                    _settings.ConfluenceSite,
-                    _settings.ConfluenceEmail,
-                    _settings.GetConfluenceToken());
+                _confluence = await ConfluenceClient.CreateAsync(_settings, cancel.Token).ConfigureAwait(true);
 
                 targets = await _confluence.SpacesAsync(cancel.Token).ConfigureAwait(true);
             }
@@ -279,6 +280,15 @@ public sealed class PublishForm : Form
             FormatProfile format = FormatProfiles.Find(_format.SelectedItem as string);
             AppSettings settings = _settings;
             Guide guide = _guide;
+
+            // Said out loud, because a step marked as an animation quietly arriving as a still
+            // picture reads as a fault in the recording rather than a choice in the format.
+            int animated = guide.Steps.Count(s => s.Animate && Render.StepAnimator.CanAnimate(s));
+
+            if (animated > 0 && !format.AllowAnimation)
+            {
+                Say($"{animated} animated steps go across as still pictures, because the {format.Name} format has animation switched off.", Theme.Muted);
+            }
 
             // The document is built off the window thread, because every picture in the guide
             // is drawn to make it.

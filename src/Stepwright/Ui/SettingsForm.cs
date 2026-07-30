@@ -1,6 +1,7 @@
 using Stepwright.Ai;
 using Stepwright.Config;
 using Stepwright.Model;
+using Stepwright.Publish;
 using Stepwright.Render;
 
 namespace Stepwright.Ui;
@@ -42,9 +43,15 @@ public sealed class SettingsForm : Form
 
     private readonly CheckBox _aiEnabled = new();
     private readonly ComboBox _aiProvider = new();
+    private readonly ComboBox _aiAuth = new();
     private readonly TextBox _aiBaseUrl = new();
     private readonly ComboBox _aiModel = new();
     private readonly TextBox _aiKey = new();
+    private readonly TextBox _aiToken = new();
+    private readonly TextBox _aiCliPath = new();
+    private readonly Label _aiCliStatus = new();
+    private readonly Label _aiModelNote = new();
+    private readonly List<string> _authKinds = new();
     private readonly CheckBox _aiPictures = new();
     private readonly CheckBox _aiNotes = new();
     private readonly Button _aiModels = new();
@@ -59,13 +66,25 @@ public sealed class SettingsForm : Form
     private readonly TextBox _huduUrl = new();
     private readonly TextBox _huduKey = new();
     private readonly Label _huduResult = new();
+    private readonly ComboBox _confluenceAuth = new();
     private readonly TextBox _confluenceSite = new();
     private readonly TextBox _confluenceEmail = new();
     private readonly TextBox _confluenceToken = new();
+    private readonly TextBox _confluenceClientId = new();
+    private readonly TextBox _confluenceSecret = new();
+    private readonly Label _confluenceSignedIn = new();
     private readonly Label _confluenceResult = new();
+    private readonly TableLayoutPanel _confluenceTokenGroup = Group();
+    private readonly TableLayoutPanel _confluenceOAuthGroup = Group();
+
+    private readonly TableLayoutPanel _aiKeyGroup = Group();
+    private readonly TableLayoutPanel _aiCliGroup = Group();
+    private readonly TableLayoutPanel _aiTokenGroup = Group();
 
     private Color _chosenMarker;
     private bool _keyEdited;
+    private bool _tokenEdited;
+    private bool _confluenceSecretEdited;
     private bool _huduKeyEdited;
     private bool _confluenceTokenEdited;
 
@@ -106,7 +125,9 @@ public sealed class SettingsForm : Form
         {
             Theme.Apply(this);
             Theme.StyleWindow(Handle);
+            ReloadAuthChoices(_settings.AiAuth);
             ShowProviderHint();
+            ShowConfluenceRoute();
         };
     }
 
@@ -281,40 +302,17 @@ public sealed class SettingsForm : Form
 
         AddField(table, "Service", _aiProvider);
 
-        _aiBaseUrl.Text = _settings.AiBaseUrl;
-        AddField(table, "Address", _aiBaseUrl);
+        _aiAuth.DropDownStyle = ComboBoxStyle.DropDownList;
+        _aiAuth.SelectedIndexChanged += (_, _) => ShowAuthRoute();
+        AddField(table, "How it signs in", _aiAuth);
 
-        _aiKey.UseSystemPasswordChar = true;
-        _aiKey.Text = _settings.HasAiKey ? new string('*', 24) : string.Empty;
+        BuildKeyGroup();
+        BuildCliGroup();
+        BuildTokenGroup();
 
-        // Tracked rather than guessed from the value, because a real key may contain anything.
-        _aiKey.TextChanged += (_, _) => _keyEdited = true;
-        AddField(table, "Key, stored encrypted for this Windows account", _aiKey);
-
-        var keyRow = new FlowLayoutPanel
-        {
-            AutoSize = true,
-            AutoSizeMode = AutoSizeMode.GrowAndShrink,
-            Dock = DockStyle.Fill,
-            Margin = new Padding(0, 0, 0, 12),
-            BackColor = Color.Transparent,
-            WrapContents = false,
-        };
-
-        _aiHint.AutoSize = true;
-        _aiHint.ForeColor = Theme.Muted;
-        _aiHint.Font = Theme.UiSmall;
-        _aiHint.Margin = new Padding(0, 5, 14, 0);
-
-        _aiKeyLink.AutoSize = true;
-        _aiKeyLink.Text = "Where to get a key";
-        _aiKeyLink.Font = Theme.UiSmall;
-        _aiKeyLink.Margin = new Padding(0, 5, 0, 0);
-        _aiKeyLink.LinkClicked += (_, _) => OpenKeyPage();
-
-        keyRow.Controls.Add(_aiHint);
-        keyRow.Controls.Add(_aiKeyLink);
-        table.Controls.Add(keyRow);
+        table.Controls.Add(_aiKeyGroup);
+        table.Controls.Add(_aiCliGroup);
+        table.Controls.Add(_aiTokenGroup);
 
         // The model is a list you can also type into, filled by asking the service.
         _aiModel.DropDownStyle = ComboBoxStyle.DropDown;
@@ -348,7 +346,14 @@ public sealed class SettingsForm : Form
 
         table.Controls.Add(Caption("Model"));
         table.Controls.Add(modelRow);
-        AddNote(table, "Find models asks the service which ones your key is allowed to use.");
+
+        _aiModelNote.AutoSize = true;
+        _aiModelNote.MaximumSize = new Size(580, 0);
+        _aiModelNote.ForeColor = Theme.Muted;
+        _aiModelNote.Font = Theme.UiSmall;
+        _aiModelNote.Margin = new Padding(1, 2, 0, 12);
+        _aiModelNote.BackColor = Color.Transparent;
+        table.Controls.Add(_aiModelNote);
 
         AddCheck(table, _aiPictures, "Let the assistant see each screenshot", _settings.AiSendScreenshots);
 
@@ -376,6 +381,217 @@ public sealed class SettingsForm : Form
         table.Controls.Add(_aiResult);
 
         return page;
+    }
+
+    /// <summary>The fields a bought key needs: an address, the key, and where to get one.</summary>
+    private void BuildKeyGroup()
+    {
+        _aiBaseUrl.Text = _settings.AiBaseUrl;
+        AddField(_aiKeyGroup, "Address", _aiBaseUrl);
+
+        _aiKey.UseSystemPasswordChar = true;
+        _aiKey.Text = _settings.HasAiKey ? new string('*', 24) : string.Empty;
+
+        // Tracked rather than guessed from the value, because a real key may contain anything.
+        _aiKey.TextChanged += (_, _) => _keyEdited = true;
+        AddField(_aiKeyGroup, "Key, stored encrypted for this Windows account", _aiKey);
+
+        var keyRow = new FlowLayoutPanel
+        {
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            Dock = DockStyle.Fill,
+            Margin = new Padding(0, 0, 0, 12),
+            BackColor = Color.Transparent,
+            WrapContents = false,
+        };
+
+        _aiHint.AutoSize = true;
+        _aiHint.ForeColor = Theme.Muted;
+        _aiHint.Font = Theme.UiSmall;
+        _aiHint.Margin = new Padding(0, 5, 14, 0);
+
+        _aiKeyLink.AutoSize = true;
+        _aiKeyLink.Text = "Where to get a key";
+        _aiKeyLink.Font = Theme.UiSmall;
+        _aiKeyLink.Margin = new Padding(0, 5, 0, 0);
+        _aiKeyLink.LinkClicked += (_, _) => OpenKeyPage();
+
+        keyRow.Controls.Add(_aiHint);
+        keyRow.Controls.Add(_aiKeyLink);
+        _aiKeyGroup.Controls.Add(keyRow);
+    }
+
+    /// <summary>
+    /// The subscription route. Stepwright runs the app you already signed in to, the same way
+    /// you would at a prompt, so the work comes out of the plan you already pay for.
+    /// </summary>
+    private void BuildCliGroup()
+    {
+        AddNote(
+            _aiCliGroup,
+            "Stepwright runs the app on this machine and reads what it says back. No token is"
+            + " kept here, and nothing is billed by the token.");
+
+        _aiCliStatus.AutoSize = true;
+        _aiCliStatus.MaximumSize = new Size(580, 0);
+        _aiCliStatus.ForeColor = Theme.Muted;
+        _aiCliStatus.Margin = new Padding(1, 2, 0, 8);
+        _aiCliStatus.BackColor = Color.Transparent;
+        _aiCliGroup.Controls.Add(_aiCliStatus);
+
+        var row = new FlowLayoutPanel
+        {
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            Dock = DockStyle.Fill,
+            Margin = new Padding(0, 0, 0, 8),
+            BackColor = Color.Transparent,
+            WrapContents = false,
+        };
+
+        var check = Action("Check the app", async () => await CheckAgentAsync().ConfigureAwait(true));
+        var install = Action("How to install it", OpenAgentPage);
+
+        row.Controls.Add(check);
+        row.Controls.Add(install);
+        _aiCliGroup.Controls.Add(row);
+
+        _aiCliPath.Text = _settings.AiCliPath;
+        AddField(_aiCliGroup, "Where the app is, only when it lives somewhere unusual", _aiCliPath);
+    }
+
+    /// <summary>The advanced route, and the warning that belongs with it.</summary>
+    private void BuildTokenGroup()
+    {
+        AddNote(
+            _aiTokenGroup,
+            "Advanced. A subscription token is issued for the vendor's own app, and sending it"
+            + " from anything else is outside the terms of a consumer plan. Accounts have been"
+            + " suspended for it. The safe route is the app above, or a key.");
+
+        _aiToken.UseSystemPasswordChar = true;
+        _aiToken.Text = _settings.HasAiToken ? new string('*', 24) : string.Empty;
+        _aiToken.TextChanged += (_, _) => _tokenEdited = true;
+        AddField(_aiTokenGroup, "Token, stored encrypted for this Windows account", _aiToken);
+
+        AddNote(
+            _aiTokenGroup,
+            "Run claude setup-token in a terminal to make one. It goes to the same address as a"
+            + " key, so leave the address as it is.");
+    }
+
+    /// <summary>Offers only the routes the chosen service actually has.</summary>
+    private void ReloadAuthChoices(string? wanted)
+    {
+        string keep = AiAuthKinds.Clean(wanted ?? SelectedAuth);
+
+        _authKinds.Clear();
+        _aiAuth.Items.Clear();
+
+        _authKinds.Add(AiAuthKinds.Key);
+        _aiAuth.Items.Add("A key I bought, billed by what it uses");
+
+        AiAgent? agent = AiAgents.Find(SelectedProvider.Id);
+
+        if (agent is not null)
+        {
+            _authKinds.Add(AiAuthKinds.Cli);
+            _aiAuth.Items.Add($"{agent.Label} on this machine, paid by my {agent.Plan} plan");
+        }
+
+        if (SelectedProvider.Id == AiProviders.Anthropic)
+        {
+            _authKinds.Add(AiAuthKinds.Token);
+            _aiAuth.Items.Add("A Claude subscription token, advanced");
+        }
+
+        int index = _authKinds.IndexOf(keep);
+        _aiAuth.SelectedIndex = index >= 0 ? index : 0;
+        ShowAuthRoute();
+    }
+
+    private string SelectedAuth =>
+        _aiAuth.SelectedIndex >= 0 && _aiAuth.SelectedIndex < _authKinds.Count
+            ? _authKinds[_aiAuth.SelectedIndex]
+            : AiAuthKinds.Key;
+
+    /// <summary>Shows the fields the chosen route needs and hides the rest.</summary>
+    private void ShowAuthRoute()
+    {
+        string auth = SelectedAuth;
+
+        _aiKeyGroup.Visible = auth == AiAuthKinds.Key;
+        _aiCliGroup.Visible = auth == AiAuthKinds.Cli;
+        _aiTokenGroup.Visible = auth == AiAuthKinds.Token;
+
+        AiAgent? agent = AiAgents.Find(SelectedProvider.Id);
+
+        if (auth == AiAuthKinds.Cli && agent is not null)
+        {
+            string? found = AiAgents.Locate(agent, _aiCliPath.Text.Trim());
+
+            _aiCliStatus.ForeColor = found is null ? Theme.Muted : Theme.Good;
+            _aiCliStatus.Text = found is null
+                ? $"{agent.Label} was not found on this machine. {agent.SignIn}"
+                : $"Found {agent.Label} at {found}. {agent.SignIn}";
+
+            _aiModels.Enabled = true;
+            _aiModelNote.Text =
+                "Leave the model empty to use whatever the app is already set to. Find models"
+                + " offers the usual names.";
+        }
+        else
+        {
+            _aiModels.Enabled = true;
+            _aiModelNote.Text = "Find models asks the service which ones your key is allowed to use.";
+        }
+
+        if (auth == AiAuthKinds.Token)
+        {
+            _aiBaseUrl.Text = AiProviders.Find(AiProviders.Anthropic).BaseUrl;
+        }
+    }
+
+    private async Task CheckAgentAsync()
+    {
+        AiAgent? agent = AiAgents.Find(SelectedProvider.Id);
+
+        if (agent is null)
+        {
+            return;
+        }
+
+        _aiCliStatus.ForeColor = Theme.Muted;
+        _aiCliStatus.Text = "Looking for " + agent.Label + "...";
+
+        try
+        {
+            using var cancel = new CancellationTokenSource(TimeSpan.FromSeconds(45));
+            string version = await AiAgents
+                .VersionAsync(agent, _aiCliPath.Text.Trim(), cancel.Token)
+                .ConfigureAwait(true);
+
+            _aiCliStatus.ForeColor = Theme.Good;
+            _aiCliStatus.Text = $"{agent.Label} answered: {StepwrightText.Shorten(version, 90)}. {agent.SignIn}";
+        }
+        catch (Exception error)
+        {
+            _aiCliStatus.ForeColor = Theme.Record;
+            _aiCliStatus.Text = StepwrightText.Shorten(error.Message, 200);
+        }
+    }
+
+    private void OpenAgentPage()
+    {
+        AiAgent? agent = AiAgents.Find(SelectedProvider.Id);
+
+        if (agent is null)
+        {
+            return;
+        }
+
+        Open(agent.InstallPage);
     }
 
     private TabPage BuildFormatTab()
@@ -461,11 +677,18 @@ public sealed class SettingsForm : Form
 
         AddHeading(table, "Confluence");
 
+        _confluenceAuth.DropDownStyle = ComboBoxStyle.DropDownList;
+        _confluenceAuth.Items.Add("An email address and an API token");
+        _confluenceAuth.Items.Add("Sign in through the browser, with your own Atlassian application");
+        _confluenceAuth.SelectedIndex = _settings.ConfluenceUsesOAuth ? 1 : 0;
+        _confluenceAuth.SelectedIndexChanged += (_, _) => ShowConfluenceRoute();
+        AddField(table, "How Stepwright signs in", _confluenceAuth);
+
         _confluenceSite.Text = _settings.ConfluenceSite;
         AddField(table, "Address of your site, for example https://yourcompany.atlassian.net", _confluenceSite);
 
         _confluenceEmail.Text = _settings.ConfluenceEmail;
-        AddField(table, "The email address you sign in with", _confluenceEmail);
+        AddField(_confluenceTokenGroup, "The email address you sign in with", _confluenceEmail);
 
         _confluenceToken.UseSystemPasswordChar = true;
         _confluenceToken.Text = string.IsNullOrEmpty(_settings.ConfluenceTokenProtected)
@@ -473,7 +696,11 @@ public sealed class SettingsForm : Form
             : new string('*', 24);
 
         _confluenceToken.TextChanged += (_, _) => _confluenceTokenEdited = true;
-        AddField(table, "API token, from your Atlassian account security page", _confluenceToken);
+        AddField(_confluenceTokenGroup, "API token, from your Atlassian account security page", _confluenceToken);
+        table.Controls.Add(_confluenceTokenGroup);
+
+        BuildConfluenceOAuthGroup();
+        table.Controls.Add(_confluenceOAuthGroup);
 
         var confluenceTest = Action("Test the connection", async () => await TestConfluenceAsync().ConfigureAwait(true));
         table.Controls.Add(confluenceTest);
@@ -486,6 +713,129 @@ public sealed class SettingsForm : Form
         table.Controls.Add(_confluenceResult);
 
         return page;
+    }
+
+    /// <summary>
+    /// Signing in through the browser needs an application registered with Atlassian, because
+    /// Atlassian issues these tokens to a named application rather than to a person. That is a
+    /// once only job in their developer console, and the values it gives you go here.
+    /// </summary>
+    private void BuildConfluenceOAuthGroup()
+    {
+        AddNote(
+            _confluenceOAuthGroup,
+            "Register an application once in the Atlassian developer console, give it the"
+            + " Confluence permissions, and add " + AtlassianOAuth.CallbackUrl
+            + " as its callback address. Then sign in here and nothing has to be pasted again.");
+
+        _confluenceClientId.Text = _settings.ConfluenceClientId;
+        AddField(_confluenceOAuthGroup, "Application identifier", _confluenceClientId);
+
+        _confluenceSecret.UseSystemPasswordChar = true;
+        _confluenceSecret.Text = string.IsNullOrEmpty(_settings.ConfluenceClientSecretProtected)
+            ? string.Empty
+            : new string('*', 24);
+
+        _confluenceSecret.TextChanged += (_, _) => _confluenceSecretEdited = true;
+        AddField(_confluenceOAuthGroup, "Application secret", _confluenceSecret);
+
+        var row = new FlowLayoutPanel
+        {
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            Dock = DockStyle.Fill,
+            Margin = new Padding(0, 0, 0, 8),
+            BackColor = Color.Transparent,
+            WrapContents = false,
+        };
+
+        row.Controls.Add(Action("Sign in to Atlassian", async () => await SignInConfluenceAsync().ConfigureAwait(true)));
+        row.Controls.Add(Action("Sign out", SignOutConfluence));
+        row.Controls.Add(Action("Open the console", () => Open(AtlassianOAuth.ConsolePage)));
+
+        _confluenceOAuthGroup.Controls.Add(row);
+
+        _confluenceSignedIn.AutoSize = true;
+        _confluenceSignedIn.MaximumSize = new Size(580, 0);
+        _confluenceSignedIn.ForeColor = Theme.Muted;
+        _confluenceSignedIn.Font = Theme.UiSmall;
+        _confluenceSignedIn.Margin = new Padding(1, 0, 0, 10);
+        _confluenceSignedIn.BackColor = Color.Transparent;
+        _confluenceOAuthGroup.Controls.Add(_confluenceSignedIn);
+
+        ShowConfluenceSignIn();
+    }
+
+    private void ShowConfluenceRoute()
+    {
+        bool oauth = _confluenceAuth.SelectedIndex == 1;
+        _confluenceTokenGroup.Visible = !oauth;
+        _confluenceOAuthGroup.Visible = oauth;
+    }
+
+    private void ShowConfluenceSignIn()
+    {
+        _confluenceSignedIn.ForeColor = _settings.HasConfluenceSignIn ? Theme.Good : Theme.Muted;
+        _confluenceSignedIn.Text = _settings.HasConfluenceSignIn
+            ? $"Signed in to {_settings.ConfluenceSiteName}. Stepwright renews this on its own."
+            : "Not signed in yet.";
+    }
+
+    private async Task SignInConfluenceAsync()
+    {
+        _confluenceResult.ForeColor = Theme.Muted;
+        _confluenceResult.Text = "Opening the browser...";
+
+        try
+        {
+            string secret = _confluenceSecretEdited
+                ? _confluenceSecret.Text.Trim()
+                : _settings.GetConfluenceSecret();
+
+            using var cancel = new CancellationTokenSource(TimeSpan.FromMinutes(5));
+
+            AtlassianSession session = await AtlassianOAuth
+                .SignInAsync(
+                    _confluenceClientId.Text.Trim(),
+                    secret,
+                    message => _confluenceResult.Text = message,
+                    cancel.Token)
+                .ConfigureAwait(true);
+
+            // Saved straight away, because a sign in that is lost by pressing Cancel is worse
+            // than one that is kept by mistake.
+            _settings.ConfluenceAuth = "oauth";
+            _settings.ConfluenceClientId = _confluenceClientId.Text.Trim();
+
+            if (_confluenceSecretEdited)
+            {
+                _settings.SetConfluenceSecret(secret);
+            }
+
+            _settings.RememberConfluence(session);
+            _settings.Save();
+
+            _confluenceSite.Text = _settings.ConfluenceSite;
+            ShowConfluenceSignIn();
+
+            _confluenceResult.ForeColor = Theme.Good;
+            _confluenceResult.Text = "Signed in to " + session.SiteName + ".";
+        }
+        catch (Exception error)
+        {
+            _confluenceResult.ForeColor = Theme.Record;
+            _confluenceResult.Text = StepwrightText.Shorten(error.Message, 200);
+        }
+    }
+
+    private void SignOutConfluence()
+    {
+        _settings.ForgetConfluence();
+        _settings.Save();
+        ShowConfluenceSignIn();
+
+        _confluenceResult.ForeColor = Theme.Muted;
+        _confluenceResult.Text = "Signed out. The application details are kept for next time.";
     }
 
     private Button Action(string text, Action work)
@@ -660,16 +1010,38 @@ public sealed class SettingsForm : Form
 
         try
         {
-            string token = _confluenceTokenEdited
-                ? _confluenceToken.Text.Trim()
-                : _settings.GetConfluenceToken();
-
-            var client = new Publish.ConfluenceClient(
-                _confluenceSite.Text.Trim(),
-                _confluenceEmail.Text.Trim(),
-                token);
-
             using var cancel = new CancellationTokenSource(TimeSpan.FromSeconds(45));
+
+            // Tested against what is on screen, so a value typed but not yet saved is the one
+            // being proved.
+            var probe = new AppSettings
+            {
+                ConfluenceAuth = _confluenceAuth.SelectedIndex == 1 ? "oauth" : "token",
+                ConfluenceSite = _confluenceSite.Text.Trim(),
+                ConfluenceEmail = _confluenceEmail.Text.Trim(),
+                ConfluenceTokenProtected = _settings.ConfluenceTokenProtected,
+                ConfluenceClientId = _confluenceClientId.Text.Trim(),
+                ConfluenceClientSecretProtected = _settings.ConfluenceClientSecretProtected,
+                ConfluenceRefreshProtected = _settings.ConfluenceRefreshProtected,
+                ConfluenceAccessProtected = _settings.ConfluenceAccessProtected,
+                ConfluenceAccessExpires = _settings.ConfluenceAccessExpires,
+                ConfluenceCloudId = _settings.ConfluenceCloudId,
+            };
+
+            if (_confluenceTokenEdited)
+            {
+                probe.SetConfluenceToken(_confluenceToken.Text.Trim());
+            }
+
+            if (_confluenceSecretEdited)
+            {
+                probe.SetConfluenceSecret(_confluenceSecret.Text.Trim());
+            }
+
+            Publish.ConfluenceClient client = await Publish.ConfluenceClient
+                .CreateAsync(probe, cancel.Token)
+                .ConfigureAwait(true);
+
             string message = await client.CheckAsync(cancel.Token).ConfigureAwait(true);
 
             _confluenceResult.ForeColor = Theme.Good;
@@ -694,6 +1066,7 @@ public sealed class SettingsForm : Form
         _aiBaseUrl.Text = provider.BaseUrl;
         _aiModel.Items.Clear();
         _aiModel.Text = provider.Model;
+        ReloadAuthChoices(SelectedAuth);
         ShowProviderHint();
     }
 
@@ -704,12 +1077,19 @@ public sealed class SettingsForm : Form
         _aiKeyLink.Visible = !string.IsNullOrEmpty(provider.KeyPage);
     }
 
-    private void OpenKeyPage()
+    private void OpenKeyPage() => Open(SelectedProvider.KeyPage);
+
+    private static void Open(string address)
     {
+        if (string.IsNullOrWhiteSpace(address))
+        {
+            return;
+        }
+
         try
         {
             using var process = new System.Diagnostics.Process();
-            process.StartInfo.FileName = SelectedProvider.KeyPage;
+            process.StartInfo.FileName = address;
             process.StartInfo.UseShellExecute = true;
             process.Start();
         }
@@ -725,14 +1105,22 @@ public sealed class SettingsForm : Form
         var probe = new AppSettings
         {
             AiProvider = SelectedProvider.Id,
+            AiAuth = SelectedAuth,
             AiBaseUrl = _aiBaseUrl.Text.Trim(),
             AiModel = _aiModel.Text.Trim(),
+            AiCliPath = _aiCliPath.Text.Trim(),
             AiKeyProtected = _settings.AiKeyProtected,
+            AiTokenProtected = _settings.AiTokenProtected,
         };
 
         if (_keyEdited && !string.IsNullOrWhiteSpace(_aiKey.Text))
         {
             probe.SetAiKey(_aiKey.Text.Trim());
+        }
+
+        if (_tokenEdited && !string.IsNullOrWhiteSpace(_aiToken.Text))
+        {
+            probe.SetAiToken(_aiToken.Text.Trim());
         }
 
         return probe;
@@ -846,14 +1234,21 @@ public sealed class SettingsForm : Form
 
         _settings.AiEnabled = _aiEnabled.Checked;
         _settings.AiProvider = SelectedProvider.Id;
+        _settings.AiAuth = SelectedAuth;
         _settings.AiBaseUrl = _aiBaseUrl.Text.Trim();
         _settings.AiModel = _aiModel.Text.Trim();
+        _settings.AiCliPath = _aiCliPath.Text.Trim();
         _settings.AiSendScreenshots = _aiPictures.Checked;
         _settings.AiWriteNotes = _aiNotes.Checked;
 
         if (_keyEdited)
         {
             _settings.SetAiKey(_aiKey.Text.Trim());
+        }
+
+        if (_tokenEdited)
+        {
+            _settings.SetAiToken(_aiToken.Text.Trim());
         }
 
         _settings.ExportFormat = _exportFormat.SelectedItem as string ?? "Stepwright";
@@ -864,11 +1259,19 @@ public sealed class SettingsForm : Form
             _settings.SetHuduKey(_huduKey.Text.Trim());
         }
 
+        _settings.ConfluenceAuth = _confluenceAuth.SelectedIndex == 1 ? "oauth" : "token";
         _settings.ConfluenceSite = _confluenceSite.Text.Trim();
         _settings.ConfluenceEmail = _confluenceEmail.Text.Trim();
+        _settings.ConfluenceClientId = _confluenceClientId.Text.Trim();
+
         if (_confluenceTokenEdited)
         {
             _settings.SetConfluenceToken(_confluenceToken.Text.Trim());
+        }
+
+        if (_confluenceSecretEdited)
+        {
+            _settings.SetConfluenceSecret(_confluenceSecret.Text.Trim());
         }
 
         _settings.Save();
@@ -899,6 +1302,23 @@ public sealed class SettingsForm : Form
         table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         page.Controls.Add(table);
         return (page, table);
+    }
+
+    /// <summary>A block of fields that can be shown or hidden as one.</summary>
+    private static TableLayoutPanel Group()
+    {
+        var table = new TableLayoutPanel
+        {
+            ColumnCount = 1,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            Dock = DockStyle.Fill,
+            Margin = new Padding(0),
+            BackColor = Color.Transparent,
+        };
+
+        table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        return table;
     }
 
     private static Label Caption(string text) => new()

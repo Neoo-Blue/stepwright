@@ -107,6 +107,18 @@ final class Settings {
         set { store.set(newValue, forKey: "aiModel") }
     }
 
+    /// How the assistant signs in: key, cli or token. See AiAuthKinds.
+    var aiAuth: String {
+        get { string("aiAuth", "key") }
+        set { store.set(newValue, forKey: "aiAuth") }
+    }
+
+    /// Where the signed in command line app lives, when it is somewhere unusual.
+    var aiCliPath: String {
+        get { string("aiCliPath", "") }
+        set { store.set(newValue, forKey: "aiCliPath") }
+    }
+
     var aiSendScreenshots: Bool {
         get { bool("aiSendScreenshots", false) }
         set { store.set(newValue, forKey: "aiSendScreenshots") }
@@ -188,6 +200,23 @@ final class Settings {
     var aiKey: String {
         get { secret(keyAccount) }
         set { setSecret(keyAccount, newValue) }
+    }
+
+    /// A subscription token, kept in the keychain the same way a key is.
+    var aiToken: String {
+        get { secret("assistant-token") }
+        set { setSecret("assistant-token", newValue) }
+    }
+
+    var hasAiToken: Bool { !aiToken.isEmpty }
+
+    /// True when the assistant has something to sign in with, whatever the route is.
+    var canAskAssistant: Bool {
+        switch aiAuth.lowercased() {
+        case "cli": return true
+        case "token": return hasAiToken
+        default: return hasAiKey || aiBaseUrl.lowercased().contains("localhost")
+        }
     }
 
     /// Reads a secret from the keychain, where anything sensitive belongs.

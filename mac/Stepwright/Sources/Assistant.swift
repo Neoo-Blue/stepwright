@@ -56,7 +56,16 @@ enum AiClient {
         user: String,
         pictures: [Data]) async throws -> String {
         let provider = settings.aiProvider.lowercased()
-        let key = settings.aiKey
+        let auth = AiAuthKinds.clean(settings.aiAuth)
+
+        // The subscription route never touches the request shapes below. The app that is
+        // already signed in does the talking, and it is handed the same prompt.
+        if auth == AiAuthKinds.cli {
+            return try AiAgents.complete(settings: settings, system: system, user: user, pictures: pictures)
+        }
+
+        let subscriptionToken = auth == AiAuthKinds.token
+        let key = subscriptionToken ? settings.aiToken : settings.aiKey
         let base = settings.aiBaseUrl.trimmingCharacters(in: .whitespaces)
             .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
 
@@ -64,9 +73,21 @@ enum AiClient {
             throw Failure.message("The assistant has no address to call. Check Settings.")
         }
 
+        if subscriptionToken && provider != "anthropic" {
+            throw Failure.message(
+                "Only Anthropic takes a subscription token. For the others use the app you signed in to, or a key.")
+        }
+
         switch provider {
         case "anthropic":
-            return try await anthropic(base: base, key: key, model: settings.aiModel, system: system, user: user, pictures: pictures)
+            return try await anthropic(
+                base: base,
+                key: key,
+                model: settings.aiModel,
+                system: system,
+                user: user,
+                pictures: pictures,
+                subscriptionToken: subscriptionToken)
         case "gemini":
             return try await gemini(base: base, key: key, model: settings.aiModel, system: system, user: user, pictures: pictures)
         default:
@@ -74,10 +95,32 @@ enum AiClient {
         }
     }
 
+    /// Puts the right kind of proof on an Anthropic request.
+    private static func sign(_ request: inout URLRequest, key: String, subscriptionToken: Bool) {
+        if !key.isEmpty {
+            if subscriptionToken {
+                request.setValue("Bearer " + key, forHTTPHeaderField: "Authorization")
+                request.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
+            } else {
+                request.setValue(key, forHTTPHeaderField: "x-api-key")
+            }
+        }
+
+        request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+    }
+
     /// Asks the service which models the key can actually use.
     static func listModels(settings: Settings) async throws -> [String] {
         let provider = settings.aiProvider.lowercased()
-        let key = settings.aiKey
+        let auth = AiAuthKinds.clean(settings.aiAuth)
+
+        // There is nothing to ask when the app does the talking, so the names it knows are offered.
+        if auth == AiAuthKinds.cli {
+            return AiAgents.find(provider)?.models ?? []
+        }
+
+        let subscriptionToken = auth == AiAuthKinds.token
+        let key = subscriptionToken ? settings.aiToken : settings.aiKey
         let base = settings.aiBaseUrl.trimmingCharacters(in: .whitespaces)
             .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
 
@@ -89,7 +132,14 @@ enum AiClient {
         switch provider {
         case "anthropic":
             address = base.hasSuffix("/v1") ? base + "/models?limit=100" : base + "/v1/models?limit=100"
-            headers["x-api-key"] = key
+
+            if subscriptionToken {
+                headers["Authorization"] = "Bearer " + key
+                headers["anthropic-beta"] = "oauth-2025-04-20"
+            } else {
+                headers["x-api-key"] = key
+            }
+
             headers["anthropic-version"] = "2023-06-01"
         case "gemini":
             let root = base.contains("/v1") ? base : base + "/v1beta"
@@ -175,7 +225,8 @@ enum AiClient {
         model: String,
         system: String,
         user: String,
-        pictures: [Data]) async throws -> String {
+        pictures: [Data],
+        subscriptionToken: Bool) async throws -> String {
         var content: [[String: Any]] = []
 
         // The picture reads better before the question about it.
@@ -192,18 +243,27 @@ enum AiClient {
 
         content.append(["type": "text", "text": user])
 
+        // A subscription token is granted to the Claude Code client, and the service only
+        // honours it when the request looks like one, so the first system block is that
+        // client's own line and the house style follows it. A bought key needs none of this.
+        let instructions: Any = subscriptionToken
+            ? [
+                ["type": "text", "text": "You are Claude Code, Anthropic's official CLI for Claude."],
+                ["type": "text", "text": system],
+              ]
+            : system
+
         let body: [String: Any] = [
             "model": model,
             "max_tokens": 4096,
             "temperature": 0.2,
-            "system": system,
+            "system": instructions,
             "messages": [["role": "user", "content": content]],
         ]
 
         let address = base.hasSuffix("/v1") ? base + "/messages" : base + "/v1/messages"
         var request = try post(address, body)
-        if !key.isEmpty { request.setValue(key, forHTTPHeaderField: "x-api-key") }
-        request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+        sign(&request, key: key, subscriptionToken: subscriptionToken)
 
         let json = try await send(request)
         let blocks = json["content"] as? [[String: Any]] ?? []

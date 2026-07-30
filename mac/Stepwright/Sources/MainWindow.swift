@@ -1161,7 +1161,13 @@ final class MainWindow: NSWindowController, NSTableViewDataSource, NSTableViewDe
 
     @objc func improveTapped() {
         guard settings.aiEnabled else {
-            warn("Turn the assistant on in Settings first, then choose a service and paste a key.")
+            warn("Turn the assistant on in Settings first, then choose a service and how it signs in.")
+            settingsTapped()
+            return
+        }
+
+        guard settings.canAskAssistant else {
+            warn("The assistant has no way to sign in yet. Choose a key or a subscription in Settings.")
             settingsTapped()
             return
         }

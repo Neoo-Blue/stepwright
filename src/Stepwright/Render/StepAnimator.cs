@@ -40,11 +40,32 @@ public static class StepAnimator
         Step step,
         AppSettings settings,
         GifMotion motion = GifMotion.Normal,
-        int maxWidth = 760)
+        int maxWidth = 760) => Build(guide, step, settings, motion, maxWidth, out _);
+
+    /// <summary>
+    /// The same, and it says why when nothing comes back. A person who asked for an animation
+    /// and got none deserves to be told which of these it was.
+    /// </summary>
+    public static byte[]? Build(
+        Guide guide,
+        Step step,
+        AppSettings settings,
+        GifMotion motion,
+        int maxWidth,
+        out string reason)
     {
+        reason = string.Empty;
         string path = guide.ImagePath(step);
-        if (string.IsNullOrEmpty(path) || !File.Exists(path))
+
+        if (string.IsNullOrEmpty(path))
         {
+            reason = "This step has no screenshot to animate.";
+            return null;
+        }
+
+        if (!File.Exists(path))
+        {
+            reason = "The screenshot for this step is missing from " + Path.GetDirectoryName(path) + ".";
             return null;
         }
 
@@ -53,8 +74,9 @@ public static class StepAnimator
         {
             source = ScreenCapture.LoadUnlocked(path);
         }
-        catch
+        catch (Exception error)
         {
+            reason = "The screenshot for this step could not be read. " + error.Message;
             return null;
         }
 
@@ -79,6 +101,7 @@ public static class StepAnimator
             (Rectangle start, Rectangle end) = Framings(step, composed.Size, settings.ZoomPadding);
             if (end.Width < 40 || end.Height < 40)
             {
+                reason = "The part of the screen this step points at is too small to move towards.";
                 return null;
             }
 

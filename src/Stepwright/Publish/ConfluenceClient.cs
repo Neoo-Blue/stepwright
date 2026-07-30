@@ -16,6 +16,9 @@ public sealed class ConfluenceClient
     private readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(180) };
     private readonly string _base;
 
+    /// <summary>Where a person opens the page, which is not always where the requests go.</summary>
+    private readonly string _browse = string.Empty;
+
     public ConfluenceClient(string siteUrl, string email, string apiToken)
     {
         string site = (siteUrl ?? string.Empty).Trim().TrimEnd('/');
@@ -32,6 +35,7 @@ public sealed class ConfluenceClient
 
         // The address is usually given as the site, while the api sits under wiki.
         _base = site.EndsWith("/wiki", StringComparison.OrdinalIgnoreCase) ? site : site + "/wiki";
+        _browse = _base;
 
         string pair = $"{(email ?? string.Empty).Trim()}:{(apiToken ?? string.Empty).Trim()}";
         _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue(
@@ -41,12 +45,80 @@ public sealed class ConfluenceClient
         _http.DefaultRequestHeaders.Add("Accept", "application/json");
     }
 
+    /// <summary>
+    /// The same site reached through a browser sign in. Atlassian routes those requests through
+    /// its own gateway, where the site is named by its identifier rather than by its address,
+    /// so only the front of the address differs and every path below stays the same.
+    /// </summary>
+    private ConfluenceClient(AtlassianSession session)
+    {
+        if (string.IsNullOrWhiteSpace(session.CloudId))
+        {
+            throw new InvalidOperationException("This sign in does not say which Confluence site it covers.");
+        }
+
+        _base = $"https://api.atlassian.com/ex/confluence/{session.CloudId.Trim()}/wiki";
+
+        string site = (session.SiteUrl ?? string.Empty).TrimEnd('/');
+        _browse = site.Length == 0
+            ? _base
+            : site.EndsWith("/wiki", StringComparison.OrdinalIgnoreCase) ? site : site + "/wiki";
+
+        _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", session.AccessToken);
+        _http.DefaultRequestHeaders.Add("Accept", "application/json");
+    }
+
+    /// <summary>
+    /// Builds a client for whichever route the settings say, renewing a sign in that has run
+    /// out. The settings are saved again when that happens, so the next run starts ready.
+    /// </summary>
+    public static async Task<ConfluenceClient> CreateAsync(Config.AppSettings settings, CancellationToken token)
+    {
+        if (!settings.ConfluenceUsesOAuth)
+        {
+            return new ConfluenceClient(
+                settings.ConfluenceSite,
+                settings.ConfluenceEmail,
+                settings.GetConfluenceToken());
+        }
+
+        if (!settings.HasConfluenceSignIn)
+        {
+            throw new InvalidOperationException("Sign in to Atlassian in Settings first.");
+        }
+
+        string access = settings.GetConfluenceAccess();
+
+        if (string.IsNullOrEmpty(access) || settings.ConfluenceAccessExpires <= DateTimeOffset.UtcNow)
+        {
+            AtlassianSession renewed = await AtlassianOAuth.RefreshAsync(
+                settings.ConfluenceClientId,
+                settings.GetConfluenceSecret(),
+                settings.GetConfluenceRefresh(),
+                token).ConfigureAwait(false);
+
+            settings.RememberConfluence(renewed);
+            settings.Save();
+            return new ConfluenceClient(renewed);
+        }
+
+        return new ConfluenceClient(new AtlassianSession
+        {
+            AccessToken = access,
+            RefreshToken = string.Empty,
+            Expires = settings.ConfluenceAccessExpires,
+            CloudId = settings.ConfluenceCloudId,
+            SiteUrl = settings.ConfluenceSite,
+            SiteName = settings.ConfluenceSiteName,
+        });
+    }
+
     public async Task<string> CheckAsync(CancellationToken token)
     {
         JsonNode? reply = await SendAsync(HttpMethod.Get, "/api/v2/spaces?limit=1", null, token)
             .ConfigureAwait(false);
 
-        return reply is null ? "Connected." : "Connected to " + _base + ".";
+        return reply is null ? "Connected." : "Connected to " + _browse + ".";
     }
 
     public async Task<List<PublishTarget>> SpacesAsync(CancellationToken token)
@@ -194,7 +266,7 @@ public sealed class ConfluenceClient
         }
 
         string? link = reply?["_links"]?["webui"]?.GetValue<string>();
-        return string.IsNullOrEmpty(link) ? $"{_base}/pages/{pageId}" : _base + link;
+        return string.IsNullOrEmpty(link) ? $"{_browse}/pages/{pageId}" : _browse + link;
     }
 
     /// <summary>

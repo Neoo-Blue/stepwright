@@ -18,9 +18,22 @@ final class SettingsWindow: NSWindowController {
 
     private let aiEnabled = NSButton(checkboxWithTitle: "Use the assistant", target: nil, action: nil)
     private let aiProvider = NSPopUpButton()
+    private let aiAuth = NSPopUpButton()
     private let aiBaseUrl = NSTextField()
     private let aiModel = NSComboBox()
     private let aiKey = NSSecureTextField()
+    private let aiToken = NSSecureTextField()
+    private let aiCliPath = NSTextField()
+    private let aiCliStatus = NSTextField(wrappingLabelWithString: "")
+
+    /// Which route each identifier in the sign in list stands for.
+    private var authKinds: [String] = []
+
+    /// The fields that belong to one route, hidden as a group when another is chosen.
+    private var keyViews: [NSView] = []
+    private var cliViews: [NSView] = []
+    private var tokenViews: [NSView] = []
+    private var tokenEdited = false
     private let aiPictures = NSButton(checkboxWithTitle: "Let the assistant see each screenshot", target: nil, action: nil)
     private let aiNotes = NSButton(checkboxWithTitle: "Write a note under a step when it helps", target: nil, action: nil)
     private let aiResult = NSTextField(labelWithString: "")
@@ -168,12 +181,39 @@ final class SettingsWindow: NSWindowController {
 
         showFormatDetail()
 
-        tabs.addTabViewItem(page("Assistant", views: [
-            aiEnabled,
-            caption("Service"), aiProvider,
+        keyViews = [
             caption("Address"), aiBaseUrl,
             caption("Key, kept in your keychain"), aiKey,
             row([aiHint, keyLink]),
+        ]
+
+        cliViews = [
+            note("Stepwright runs the app on this machine and reads what it says back. No token"
+                 + " is kept here, and nothing is billed by the token."),
+            aiCliStatus,
+            row([
+                NSButton(title: "Check the app", target: self, action: #selector(checkAgentTapped)),
+                NSButton(title: "How to install it", target: self, action: #selector(agentPageTapped)),
+            ]),
+            caption("Where the app is, only when it lives somewhere unusual"), aiCliPath,
+        ]
+
+        tokenViews = [
+            note("Advanced. A subscription token is issued for the vendor's own app, and sending"
+                 + " it from anything else is outside the terms of a consumer plan. Accounts have"
+                 + " been suspended for it. The safe route is the app above, or a key."),
+            caption("Token, kept in your keychain"), aiToken,
+            note("Run claude setup-token in Terminal to make one."),
+        ]
+
+        aiAuth.target = self
+        aiAuth.action = #selector(authChanged)
+
+        tabs.addTabViewItem(page("Assistant", views: [
+            aiEnabled,
+            caption("Service"), aiProvider,
+            caption("How it signs in"), aiAuth,
+        ] + keyViews + cliViews + tokenViews + [
             caption("Model"), row([aiModel, findModels]),
             aiPictures, aiNotes,
             row([test]), aiResult,
@@ -257,6 +297,8 @@ final class SettingsWindow: NSWindowController {
         aiBaseUrl.stringValue = settings.aiBaseUrl
         aiModel.stringValue = settings.aiModel
         aiKey.stringValue = settings.hasAiKey ? String(repeating: "*", count: 24) : ""
+        aiToken.stringValue = settings.hasAiToken ? String(repeating: "*", count: 24) : ""
+        aiCliPath.stringValue = settings.aiCliPath
         aiPictures.state = settings.aiSendScreenshots ? .on : .off
         aiNotes.state = settings.aiWriteNotes ? .on : .off
 
@@ -264,7 +306,82 @@ final class SettingsWindow: NSWindowController {
             aiProvider.selectItem(at: index)
         }
 
+        reloadAuthChoices(settings.aiAuth)
         showHint()
+    }
+
+    /// Offers only the routes the chosen service actually has.
+    private func reloadAuthChoices(_ wanted: String) {
+        let keep = AiAuthKinds.clean(wanted)
+
+        authKinds = [AiAuthKinds.key]
+        aiAuth.removeAllItems()
+        aiAuth.addItem(withTitle: "A key I bought, billed by what it uses")
+
+        if let agent = AiAgents.find(chosenProvider.id) {
+            authKinds.append(AiAuthKinds.cli)
+            aiAuth.addItem(withTitle: "\(agent.label) on this machine, paid by my \(agent.plan) plan")
+        }
+
+        if chosenProvider.id == "anthropic" {
+            authKinds.append(AiAuthKinds.token)
+            aiAuth.addItem(withTitle: "A Claude subscription token, advanced")
+        }
+
+        aiAuth.selectItem(at: authKinds.firstIndex(of: keep) ?? 0)
+        showAuthRoute()
+    }
+
+    private var chosenAuth: String {
+        let index = aiAuth.indexOfSelectedItem
+        return index >= 0 && index < authKinds.count ? authKinds[index] : AiAuthKinds.key
+    }
+
+    /// Shows the fields the chosen route needs and hides the rest.
+    private func showAuthRoute() {
+        let auth = chosenAuth
+
+        for view in keyViews { view.isHidden = auth != AiAuthKinds.key }
+        for view in cliViews { view.isHidden = auth != AiAuthKinds.cli }
+        for view in tokenViews { view.isHidden = auth != AiAuthKinds.token }
+
+        if auth == AiAuthKinds.cli, let agent = AiAgents.find(chosenProvider.id) {
+            let found = AiAgents.locate(agent, saved: aiCliPath.stringValue)
+
+            aiCliStatus.textColor = found == nil ? Theme.muted : Theme.accent
+            aiCliStatus.stringValue = found == nil
+                ? "\(agent.label) was not found on this machine. \(agent.signIn)"
+                : "Found \(agent.label) at \(found!). \(agent.signIn)"
+        }
+
+        if auth == AiAuthKinds.token {
+            aiBaseUrl.stringValue = AiProviders.find("anthropic").baseUrl
+        }
+    }
+
+    @objc private func authChanged() { showAuthRoute() }
+
+    @objc private func checkAgentTapped() {
+        guard let agent = AiAgents.find(chosenProvider.id) else { return }
+
+        aiCliStatus.textColor = Theme.muted
+        aiCliStatus.stringValue = "Looking for \(agent.label)..."
+
+        do {
+            let version = try AiAgents.version(agent, saved: aiCliPath.stringValue)
+            aiCliStatus.textColor = Theme.accent
+            aiCliStatus.stringValue = "\(agent.label) answered: \(version). \(agent.signIn)"
+        } catch {
+            aiCliStatus.textColor = .systemRed
+            aiCliStatus.stringValue = error.localizedDescription
+        }
+    }
+
+    @objc private func agentPageTapped() {
+        guard let agent = AiAgents.find(chosenProvider.id),
+              let url = URL(string: agent.installPage) else { return }
+
+        NSWorkspace.shared.open(url)
     }
 
     private var chosenProvider: AiProvider {
@@ -277,11 +394,17 @@ final class SettingsWindow: NSWindowController {
     private func probe() -> Settings {
         let probe = Settings()
         probe.aiProvider = chosenProvider.id
+        probe.aiAuth = chosenAuth
         probe.aiBaseUrl = aiBaseUrl.stringValue.trimmingCharacters(in: .whitespaces)
         probe.aiModel = aiModel.stringValue.trimmingCharacters(in: .whitespaces)
+        probe.aiCliPath = aiCliPath.stringValue.trimmingCharacters(in: .whitespaces)
 
         if keyEdited, !aiKey.stringValue.isEmpty {
             probe.aiKey = aiKey.stringValue.trimmingCharacters(in: .whitespaces)
+        }
+
+        if tokenEdited, !aiToken.stringValue.isEmpty {
+            probe.aiToken = aiToken.stringValue.trimmingCharacters(in: .whitespaces)
         }
 
         return probe
@@ -291,6 +414,7 @@ final class SettingsWindow: NSWindowController {
         aiBaseUrl.stringValue = chosenProvider.baseUrl
         aiModel.removeAllItems()
         aiModel.stringValue = chosenProvider.model
+        reloadAuthChoices(chosenAuth)
         showHint()
     }
 
@@ -301,6 +425,7 @@ final class SettingsWindow: NSWindowController {
 
     @objc private func findModelsTapped() {
         keyEdited = keyEdited || !aiKey.stringValue.contains("*")
+        tokenEdited = tokenEdited || !aiToken.stringValue.contains("*")
         aiResult.stringValue = "Asking the service which models it has..."
 
         let settings = probe()
@@ -331,6 +456,7 @@ final class SettingsWindow: NSWindowController {
 
     @objc private func testTapped() {
         keyEdited = keyEdited || !aiKey.stringValue.contains("*")
+        tokenEdited = tokenEdited || !aiToken.stringValue.contains("*")
         aiResult.stringValue = "Talking to the service..."
 
         let settings = probe()
@@ -498,13 +624,19 @@ final class SettingsWindow: NSWindowController {
 
         settings.aiEnabled = aiEnabled.state == .on
         settings.aiProvider = chosenProvider.id
+        settings.aiAuth = chosenAuth
         settings.aiBaseUrl = aiBaseUrl.stringValue.trimmingCharacters(in: .whitespaces)
         settings.aiModel = aiModel.stringValue.trimmingCharacters(in: .whitespaces)
+        settings.aiCliPath = aiCliPath.stringValue.trimmingCharacters(in: .whitespaces)
         settings.aiSendScreenshots = aiPictures.state == .on
         settings.aiWriteNotes = aiNotes.state == .on
 
         if keyEdited || !aiKey.stringValue.contains("*") {
             settings.aiKey = aiKey.stringValue.trimmingCharacters(in: .whitespaces)
+        }
+
+        if tokenEdited || !aiToken.stringValue.contains("*") {
+            settings.aiToken = aiToken.stringValue.trimmingCharacters(in: .whitespaces)
         }
 
         settings.exportFormat = exportFormat.titleOfSelectedItem ?? "Stepwright"

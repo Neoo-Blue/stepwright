@@ -56,6 +56,18 @@ public sealed class AppSettings
     public string AiKeyProtected { get; set; } = string.Empty;
 
     /// <summary>
+    /// How the assistant signs in. One of the values in AiAuthKinds: a key billed by the token,
+    /// the command line app you already signed in to, or a subscription token sent direct.
+    /// </summary>
+    public string AiAuth { get; set; } = "key";
+
+    /// <summary>Where the signed in command line app lives, when it is somewhere unusual.</summary>
+    public string AiCliPath { get; set; } = string.Empty;
+
+    /// <summary>A subscription token, encrypted the same way a key is.</summary>
+    public string AiTokenProtected { get; set; } = string.Empty;
+
+    /// <summary>
     /// Lets the assistant look at the screenshot for each step, which is what makes it able
     /// to name what is actually on screen. Off by default, because pictures leaving the
     /// machine is a decision the person has to make on purpose.
@@ -83,6 +95,19 @@ public sealed class AppSettings
     public string ConfluenceEmail { get; set; } = string.Empty;
     public string ConfluenceTokenProtected { get; set; } = string.Empty;
     public string ConfluenceFormat { get; set; } = "Confluence";
+
+    /// <summary>Either an email address with an API token, or a sign in through the browser.</summary>
+    public string ConfluenceAuth { get; set; } = "token";
+
+    /// <summary>The application you registered with Atlassian. The secret is encrypted.</summary>
+    public string ConfluenceClientId { get; set; } = string.Empty;
+    public string ConfluenceClientSecretProtected { get; set; } = string.Empty;
+
+    public string ConfluenceRefreshProtected { get; set; } = string.Empty;
+    public string ConfluenceAccessProtected { get; set; } = string.Empty;
+    public DateTimeOffset ConfluenceAccessExpires { get; set; }
+    public string ConfluenceCloudId { get; set; } = string.Empty;
+    public string ConfluenceSiteName { get; set; } = string.Empty;
 
     public string LibraryFolder { get; set; } = DefaultLibraryFolder;
 
@@ -179,6 +204,10 @@ public sealed class AppSettings
 
     public string GetAiKey() => Reveal(AiKeyProtected);
 
+    public void SetAiToken(string plainToken) => AiTokenProtected = Protect(plainToken);
+
+    public string GetAiToken() => Reveal(AiTokenProtected);
+
     public void SetHuduKey(string plainKey) => HuduKeyProtected = Protect(plainKey);
 
     public string GetHuduKey() => Reveal(HuduKeyProtected);
@@ -187,15 +216,68 @@ public sealed class AppSettings
 
     public string GetConfluenceToken() => Reveal(ConfluenceTokenProtected);
 
+    public void SetConfluenceSecret(string plainSecret) => ConfluenceClientSecretProtected = Protect(plainSecret);
+
+    public string GetConfluenceSecret() => Reveal(ConfluenceClientSecretProtected);
+
+    public string GetConfluenceRefresh() => Reveal(ConfluenceRefreshProtected);
+
+    public string GetConfluenceAccess() => Reveal(ConfluenceAccessProtected);
+
+    /// <summary>Keeps what a finished sign in handed back, so it survives a restart.</summary>
+    public void RememberConfluence(Publish.AtlassianSession session)
+    {
+        ConfluenceAccessProtected = Protect(session.AccessToken);
+        ConfluenceRefreshProtected = Protect(session.RefreshToken);
+        ConfluenceAccessExpires = session.Expires;
+        ConfluenceCloudId = session.CloudId;
+        ConfluenceSiteName = session.SiteName;
+
+        if (!string.IsNullOrWhiteSpace(session.SiteUrl))
+        {
+            ConfluenceSite = session.SiteUrl;
+        }
+    }
+
+    public void ForgetConfluence()
+    {
+        ConfluenceAccessProtected = string.Empty;
+        ConfluenceRefreshProtected = string.Empty;
+        ConfluenceAccessExpires = default;
+        ConfluenceCloudId = string.Empty;
+        ConfluenceSiteName = string.Empty;
+    }
+
     [JsonIgnore]
     public bool HasAiKey => !string.IsNullOrEmpty(AiKeyProtected);
+
+    [JsonIgnore]
+    public bool HasAiToken => !string.IsNullOrEmpty(AiTokenProtected);
+
+    /// <summary>True when the assistant has something to sign in with, whatever the route is.</summary>
+    [JsonIgnore]
+    public bool CanAskAssistant => AiAuth?.ToLowerInvariant() switch
+    {
+        "cli" => true,
+        "token" => HasAiToken,
+        _ => HasAiKey || (AiBaseUrl ?? string.Empty).Contains("localhost", StringComparison.OrdinalIgnoreCase),
+    };
 
     [JsonIgnore]
     public bool HasHudu => !string.IsNullOrWhiteSpace(HuduBaseUrl) && !string.IsNullOrEmpty(HuduKeyProtected);
 
     [JsonIgnore]
-    public bool HasConfluence =>
-        !string.IsNullOrWhiteSpace(ConfluenceSite)
-        && !string.IsNullOrWhiteSpace(ConfluenceEmail)
-        && !string.IsNullOrEmpty(ConfluenceTokenProtected);
+    public bool ConfluenceUsesOAuth =>
+        string.Equals(ConfluenceAuth, "oauth", StringComparison.OrdinalIgnoreCase);
+
+    [JsonIgnore]
+    public bool HasConfluenceSignIn =>
+        !string.IsNullOrEmpty(ConfluenceRefreshProtected) && !string.IsNullOrWhiteSpace(ConfluenceCloudId);
+
+    [JsonIgnore]
+    public bool HasConfluence => ConfluenceUsesOAuth
+        ? HasConfluenceSignIn
+        : !string.IsNullOrWhiteSpace(ConfluenceSite)
+          && !string.IsNullOrWhiteSpace(ConfluenceEmail)
+          && !string.IsNullOrEmpty(ConfluenceTokenProtected);
 }

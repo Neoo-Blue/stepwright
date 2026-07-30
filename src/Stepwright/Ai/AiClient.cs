@@ -27,7 +27,17 @@ public static class AiClient
         CancellationToken token)
     {
         string provider = settings.AiProvider?.ToLowerInvariant() ?? AiProviders.OpenAi;
-        string key = settings.GetAiKey();
+        string auth = AiAuthKinds.Clean(settings.AiAuth);
+
+        // The subscription route never touches this file's request shapes. The app that is
+        // already signed in does the talking, and it is handed the same prompt.
+        if (auth == AiAuthKinds.Cli)
+        {
+            return await AiAgents.CompleteAsync(settings, system, user, pictures, token).ConfigureAwait(false);
+        }
+
+        bool subscriptionToken = auth == AiAuthKinds.Token;
+        string key = subscriptionToken ? settings.GetAiToken() : settings.GetAiKey();
         string baseUrl = (settings.AiBaseUrl ?? string.Empty).TrimEnd('/');
 
         if (string.IsNullOrWhiteSpace(baseUrl))
@@ -35,9 +45,15 @@ public static class AiClient
             throw new InvalidOperationException("The assistant has no address to call. Check Settings.");
         }
 
+        if (subscriptionToken && provider != AiProviders.Anthropic)
+        {
+            throw new InvalidOperationException(
+                "Only Anthropic takes a subscription token. For the others use the app you signed in to, or a key.");
+        }
+
         return provider switch
         {
-            AiProviders.Anthropic => await AnthropicAsync(baseUrl, key, settings.AiModel, system, user, pictures, token).ConfigureAwait(false),
+            AiProviders.Anthropic => await AnthropicAsync(baseUrl, key, settings.AiModel, system, user, pictures, subscriptionToken, token).ConfigureAwait(false),
             AiProviders.Gemini => await GeminiAsync(baseUrl, key, settings.AiModel, system, user, pictures, token).ConfigureAwait(false),
             _ => await OpenAiAsync(baseUrl, key, settings.AiModel, system, user, pictures, token).ConfigureAwait(false),
         };
@@ -103,6 +119,7 @@ public static class AiClient
         string system,
         string user,
         IReadOnlyList<byte[]>? pictures,
+        bool subscriptionToken,
         CancellationToken token)
     {
         var content = new JsonArray();
@@ -129,7 +146,7 @@ public static class AiClient
             ["model"] = model,
             ["max_tokens"] = 4096,
             ["temperature"] = 0.2,
-            ["system"] = system,
+            ["system"] = System(system, subscriptionToken),
             ["messages"] = new JsonArray
             {
                 new JsonObject { ["role"] = "user", ["content"] = content },
@@ -141,12 +158,7 @@ public static class AiClient
             : baseUrl + "/v1/messages";
 
         using var request = new HttpRequestMessage(HttpMethod.Post, url);
-        if (!string.IsNullOrEmpty(key))
-        {
-            request.Headers.Add("x-api-key", key);
-        }
-
-        request.Headers.Add("anthropic-version", "2023-06-01");
+        Sign(request, key, subscriptionToken);
         request.Content = Json(body);
 
         JsonNode reply = await SendAsync(request, token).ConfigureAwait(false);
@@ -167,6 +179,42 @@ public static class AiClient
         }
 
         return string.Empty;
+    }
+
+    /// <summary>
+    /// A subscription token is granted to the Claude Code client, and the service only honours
+    /// it when the request looks like one, so the first system block is that client's own line
+    /// and the house style follows it. A bought key needs none of this.
+    /// </summary>
+    private static JsonNode System(string system, bool subscriptionToken) => subscriptionToken
+        ? new JsonArray
+        {
+            new JsonObject
+            {
+                ["type"] = "text",
+                ["text"] = "You are Claude Code, Anthropic's official CLI for Claude.",
+            },
+            new JsonObject { ["type"] = "text", ["text"] = system },
+        }
+        : JsonValue.Create(system)!;
+
+    /// <summary>Puts the right kind of proof on an Anthropic request.</summary>
+    private static void Sign(HttpRequestMessage request, string key, bool subscriptionToken)
+    {
+        if (!string.IsNullOrEmpty(key))
+        {
+            if (subscriptionToken)
+            {
+                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
+                request.Headers.Add("anthropic-beta", "oauth-2025-04-20");
+            }
+            else
+            {
+                request.Headers.Add("x-api-key", key);
+            }
+        }
+
+        request.Headers.Add("anthropic-version", "2023-06-01");
     }
 
     // ------------------------------------------------------------------ Gemini shape
@@ -249,7 +297,19 @@ public static class AiClient
     public static async Task<IReadOnlyList<string>> ListModelsAsync(AppSettings settings, CancellationToken token)
     {
         string provider = settings.AiProvider?.ToLowerInvariant() ?? AiProviders.OpenAi;
-        string key = settings.GetAiKey();
+        string auth = AiAuthKinds.Clean(settings.AiAuth);
+
+        // There is nothing to ask when the app does the talking, so the names it knows are offered.
+        if (auth == AiAuthKinds.Cli)
+        {
+            AiAgent? agent = AiAgents.Find(provider);
+            return agent is null
+                ? Array.Empty<string>()
+                : agent.Models.Where(m => m.Length > 0).ToList();
+        }
+
+        bool subscriptionToken = auth == AiAuthKinds.Token;
+        string key = subscriptionToken ? settings.GetAiToken() : settings.GetAiKey();
         string baseUrl = (settings.AiBaseUrl ?? string.Empty).TrimEnd('/');
 
         if (string.IsNullOrWhiteSpace(baseUrl))
@@ -262,12 +322,7 @@ public static class AiClient
         switch (provider)
         {
             case AiProviders.Anthropic:
-                if (!string.IsNullOrEmpty(key))
-                {
-                    request.Headers.Add("x-api-key", key);
-                }
-
-                request.Headers.Add("anthropic-version", "2023-06-01");
+                Sign(request, key, subscriptionToken);
                 break;
 
             case AiProviders.Gemini:

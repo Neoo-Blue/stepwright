@@ -627,15 +627,34 @@ public sealed class MainForm : Form
 
     private async Task<byte[]?> BuildAnimationAsync()
     {
-        if (SelectedStep is not { } step)
-        {
-            return null;
-        }
+        // Falling back to the first step that can be animated, because doing nothing at all
+        // and saying nothing at all is the worst answer to a button being pressed.
+        Step? step = SelectedStep;
 
-        if (!StepAnimator.CanAnimate(step))
+        if (step is null || !StepAnimator.CanAnimate(step))
         {
-            Warn("This step has no click to move towards, so there is nothing to animate.");
-            return null;
+            Step? fallback = _guide.Steps.FirstOrDefault(StepAnimator.CanAnimate);
+
+            if (fallback is null)
+            {
+                Warn(
+                    "No step here can be animated. An animation moves towards a click or a"
+                    + " control, so a step needs a screenshot and one of those.");
+                return null;
+            }
+
+            if (step is not null)
+            {
+                Warn("That step has no click to move towards, so the first one that has is used.");
+            }
+
+            step = fallback;
+
+            int index = _guide.Steps.IndexOf(step);
+            if (index >= 0 && index < _list.Items.Count)
+            {
+                _list.SelectedIndex = index;
+            }
         }
 
         Cursor = Cursors.WaitCursor;
@@ -646,13 +665,17 @@ public sealed class MainForm : Form
             Guide guide = _guide;
             AppSettings settings = _settings;
 
+            string reason = string.Empty;
+
             byte[]? animation = await Task
-                .Run(() => GuideRenderer.RenderAnimation(guide, step, settings))
+                .Run(() => GuideRenderer.RenderAnimation(guide, step, settings, out reason))
                 .ConfigureAwait(true);
 
             if (animation is null)
             {
-                Warn("The animation could not be built for this step.");
+                Warn(string.IsNullOrEmpty(reason)
+                    ? "The animation could not be built for this step."
+                    : reason);
             }
 
             return animation;
@@ -1945,6 +1968,13 @@ public sealed class MainForm : Form
 
     private void ExportHtml(bool embed)
     {
+        FormatProfile chosen = FormatProfiles.Find(_settings.ExportFormat);
+
+        if (!chosen.AllowAnimation)
+        {
+            NoteLostAnimations($"the {chosen.Name} format has animation switched off");
+        }
+
         using var dialog = new SaveFileDialog
         {
             Filter = "Web page (*.html)|*.html",
@@ -1992,6 +2022,8 @@ public sealed class MainForm : Form
 
     private void ExportDocx()
     {
+        NoteLostAnimations("a Word document cannot hold one");
+
         using var dialog = new SaveFileDialog
         {
             Filter = "Word document (*.docx)|*.docx",
@@ -2013,6 +2045,8 @@ public sealed class MainForm : Form
 
     private void ExportPdf()
     {
+        NoteLostAnimations("a PDF cannot hold one");
+
         using var dialog = new SaveFileDialog
         {
             Filter = "PDF document (*.pdf)|*.pdf",
@@ -2071,6 +2105,31 @@ public sealed class MainForm : Form
             File.WriteAllBytes(path, reel);
             return path;
         });
+    }
+
+    /// <summary>
+    /// Says so when steps marked as animations are about to land as still pictures. Silence
+    /// here is what makes an animation look broken when nothing is actually wrong with it.
+    /// </summary>
+    private void NoteLostAnimations(string because)
+    {
+        int animated = _guide.Steps.Count(s => s.Animate && StepAnimator.CanAnimate(s));
+
+        if (animated == 0)
+        {
+            return;
+        }
+
+        MessageBox.Show(
+            this,
+            $"{animated} of these steps are marked as animations, and they will be written as"
+            + $" still pictures, because {because}."
+            + Environment.NewLine
+            + Environment.NewLine
+            + "A web page keeps the movement, and Save this animation as a file writes one on its own.",
+            "Stepwright",
+            MessageBoxButtons.OK,
+            MessageBoxIcon.Information);
     }
 
     private async void RunExport(Func<string> work)
@@ -2193,14 +2252,14 @@ public sealed class MainForm : Form
     {
         if (!_settings.AiEnabled)
         {
-            Warn("Turn the assistant on in Settings first, then choose a service and paste a key.");
+            Warn("Turn the assistant on in Settings first, then choose a service and how it signs in.");
             OpenSettings();
             return;
         }
 
-        if (!_settings.HasAiKey && !_settings.AiBaseUrl.Contains("localhost", StringComparison.OrdinalIgnoreCase))
+        if (!_settings.CanAskAssistant)
         {
-            Warn("The assistant needs a key. Add one in Settings.");
+            Warn("The assistant has no way to sign in yet. Choose a key or a subscription in Settings.");
             OpenSettings();
             return;
         }

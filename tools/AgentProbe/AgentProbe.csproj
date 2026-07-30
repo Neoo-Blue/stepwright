@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Runs the subscription route against whichever signed in app is on this machine, so the
+       arguments, the pipe and the answer can be proved without a Windows build. Not shipped. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>AgentProbe</AssemblyName>
+    <RootNamespace>AgentProbe</RootNamespace>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <NoWarn>$(NoWarn);CA1416</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <Compile Include="GlobalUsings.cs" />
+    <Compile Include="../../src/Stepwright/Publish/AtlassianOAuth.cs" />
+    <Compile Include="../../src/Stepwright/Ai/AiAgents.cs" />
+    <Compile Include="../../src/Stepwright/Ai/AiProviders.cs" />
+    <Compile Include="../../src/Stepwright/Config/AppSettings.cs" />
+  </ItemGroup>
+
+</Project>

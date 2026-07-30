@@ -67,10 +67,22 @@ public static class GuideRenderer
     /// <summary>
     /// The animated version of a step, or nothing when there is no sensible movement to make.
     /// </summary>
-    public static byte[]? RenderAnimation(Guide guide, Step step, AppSettings settings)
+    public static byte[]? RenderAnimation(Guide guide, Step step, AppSettings settings) =>
+        RenderAnimation(guide, step, settings, out _);
+
+    /// <summary>
+    /// The same, and it says why when there is nothing to show. An export can carry on with the
+    /// still picture, but the person who pressed a button has to be told what happened.
+    /// </summary>
+    public static byte[]? RenderAnimation(Guide guide, Step step, AppSettings settings, out string reason)
     {
+        reason = string.Empty;
+
         if (!StepAnimator.CanAnimate(step))
         {
+            reason = step.HasImage
+                ? "This step has no click or control to move towards, so there is nothing to animate."
+                : "This step has no screenshot, so there is nothing to animate.";
             return null;
         }
 
@@ -80,11 +92,18 @@ public static class GuideRenderer
 
         try
         {
-            return StepAnimator.Build(guide, step, settings, motion, Math.Clamp(settings.GifWidth, 320, 1400));
+            return StepAnimator.Build(
+                guide,
+                step,
+                settings,
+                motion,
+                Math.Clamp(settings.GifWidth, 320, 1400),
+                out reason);
         }
-        catch
+        catch (Exception error)
         {
-            // A step that cannot be animated simply falls back to its still picture.
+            // An export carries on with the still picture, and the reason travels back with it.
+            reason = "The animation could not be built. " + error.Message;
             return null;
         }
     }
