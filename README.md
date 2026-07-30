@@ -28,6 +28,8 @@ shared is the `.stepwright` file, so a guide recorded on one opens on the other.
 | Writing assistant | optional, and you pick the service: GPT, Claude, Gemini or your own | their model only |
 | Screenshot framing | four framings per step, switchable after recording | one |
 | Animated steps | built from the screenshot you already took, no extra recording | video is a separate paid product |
+| Publishing | straight into Hudu or Confluence, no file in between | their own workspace only |
+| Output format | yours, defined in a file you can edit and share | fixed |
 | A whole guide as one animation | included | not offered |
 
 ## How it works
@@ -60,6 +62,23 @@ shared is the `.stepwright` file, so a guide recorded on one opens on the other.
 Step text comes from the Windows accessibility tree, so the names in the guide are the real
 names of the buttons and fields, not guesses from pixels.
 
+## Formats
+
+Every export and every publish is written by a **format**: the typeface, the sizes, whether the
+styling travels on each element or in a stylesheet, how pictures are carried, and what goes in
+the footer. Four ship with the app.
+
+| Format | What it is for |
+| --- | --- |
+| Stepwright | The default look: a styled page with rounded pictures |
+| Hudu | One container, inline styles, Arial, sixteen point bold headings, fourteen point body, no tables and no colour so Hudu controls light and dark mode |
+| Confluence | Storage format, with pictures attached to the page and referred to by name |
+| Plain | Headings, paragraphs and pictures with no styling at all |
+
+A format is a small text file. Settings, on the Format page, will import one, export the one you
+are using, or duplicate it so you can edit your own copy. They live beside the settings, so a
+format can sit in your own configuration and be handed to someone else.
+
 ## Exports
 
 * Web page in a single file, with every picture inside it, ready to email or drop on a share
@@ -85,6 +104,28 @@ Two kinds, and they answer different needs.
 Both are built from the screenshots already captured, so there is nothing to record twice and
 nothing to time. The same step always produces the same animation. The only two settings, under
 Look, are how lively the movement is and how wide the file is written.
+
+### Publishing straight into a knowledge base
+
+Publish, then Hudu or Confluence. The guide goes across as an article with no file in between.
+
+* **Hudu** keeps pictures inside the article, so it goes in one piece. Choose the company, the
+  folder, and whether to create a new article or replace one that is already there.
+* **Confluence** keeps pictures as attachments, so the page is created first and each picture
+  is attached to it afterwards, with the text already referring to them by name. Choose the
+  space and, if you want, a page to file it under.
+
+Set both up under Settings, on the Publishing page. Hudu needs the address of your site and an
+API key from Admin then API. Confluence needs the address, the email you sign in with, and an
+API token from your Atlassian account security page. Both are encrypted for your Windows
+account, and each has a button that proves the connection before you rely on it.
+
+### Steps without a picture
+
+Not every step needs one. **Add note** writes a step that is words only, and Options then
+**Use words only for this step** takes the picture off one that has it. The picture is only set
+aside, so pressing it again brings it back, and it is dropped for good the next time the guide
+is saved. Text only steps carry through every export and both destinations.
 
 The guide itself saves as one `.stepwright` file that holds the text and every screenshot,
 so you can reopen and edit it later.
@@ -310,6 +351,7 @@ src/Stepwright
   Model/       the guide document
   Render/      crop, zoom, click marker, blur, arrows, labels and the animations
   Export/      html, markdown, word, pdf, and the guide file format
+  Publish/     sending an article to Hudu or Confluence
   Export/Pdf/  the document writer, portable on purpose so it can be tested anywhere
   Export/Gif/  the animation writer, portable for the same reason
   Ai/          the optional writing pass

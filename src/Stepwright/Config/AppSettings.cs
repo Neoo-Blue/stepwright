@@ -71,6 +71,19 @@ public sealed class AppSettings
     /// <summary>Widest an animation is written, in pixels. Smaller keeps the file light.</summary>
     public int GifWidth { get; set; } = 760;
 
+    /// <summary>Name of the format used when writing a document. See FormatProfiles.</summary>
+    public string ExportFormat { get; set; } = "Stepwright";
+
+    // Publishing straight into a knowledge base.
+    public string HuduBaseUrl { get; set; } = string.Empty;
+    public string HuduKeyProtected { get; set; } = string.Empty;
+    public string HuduFormat { get; set; } = "Hudu";
+
+    public string ConfluenceSite { get; set; } = string.Empty;
+    public string ConfluenceEmail { get; set; } = string.Empty;
+    public string ConfluenceTokenProtected { get; set; } = string.Empty;
+    public string ConfluenceFormat { get; set; } = "Confluence";
+
     public string LibraryFolder { get; set; } = DefaultLibraryFolder;
 
     [JsonIgnore]
@@ -119,32 +132,31 @@ public sealed class AppSettings
         }
     }
 
-    /// <summary>Stores the key encrypted for the current Windows account only.</summary>
-    public void SetAiKey(string plainKey)
+    /// <summary>Encrypts a secret for the current Windows account only.</summary>
+    public static string Protect(string plain)
     {
-        if (string.IsNullOrWhiteSpace(plainKey))
+        if (string.IsNullOrWhiteSpace(plain))
         {
-            AiKeyProtected = string.Empty;
-            return;
+            return string.Empty;
         }
 
         try
         {
             byte[] cipher = ProtectedData.Protect(
-                Encoding.UTF8.GetBytes(plainKey),
+                Encoding.UTF8.GetBytes(plain),
                 optionalEntropy: null,
                 scope: DataProtectionScope.CurrentUser);
-            AiKeyProtected = Convert.ToBase64String(cipher);
+            return Convert.ToBase64String(cipher);
         }
         catch
         {
-            AiKeyProtected = string.Empty;
+            return string.Empty;
         }
     }
 
-    public string GetAiKey()
+    public static string Reveal(string protectedValue)
     {
-        if (string.IsNullOrEmpty(AiKeyProtected))
+        if (string.IsNullOrEmpty(protectedValue))
         {
             return string.Empty;
         }
@@ -152,7 +164,7 @@ public sealed class AppSettings
         try
         {
             byte[] plain = ProtectedData.Unprotect(
-                Convert.FromBase64String(AiKeyProtected),
+                Convert.FromBase64String(protectedValue),
                 optionalEntropy: null,
                 scope: DataProtectionScope.CurrentUser);
             return Encoding.UTF8.GetString(plain);
@@ -163,6 +175,27 @@ public sealed class AppSettings
         }
     }
 
+    public void SetAiKey(string plainKey) => AiKeyProtected = Protect(plainKey);
+
+    public string GetAiKey() => Reveal(AiKeyProtected);
+
+    public void SetHuduKey(string plainKey) => HuduKeyProtected = Protect(plainKey);
+
+    public string GetHuduKey() => Reveal(HuduKeyProtected);
+
+    public void SetConfluenceToken(string plainToken) => ConfluenceTokenProtected = Protect(plainToken);
+
+    public string GetConfluenceToken() => Reveal(ConfluenceTokenProtected);
+
     [JsonIgnore]
     public bool HasAiKey => !string.IsNullOrEmpty(AiKeyProtected);
+
+    [JsonIgnore]
+    public bool HasHudu => !string.IsNullOrWhiteSpace(HuduBaseUrl) && !string.IsNullOrEmpty(HuduKeyProtected);
+
+    [JsonIgnore]
+    public bool HasConfluence =>
+        !string.IsNullOrWhiteSpace(ConfluenceSite)
+        && !string.IsNullOrWhiteSpace(ConfluenceEmail)
+        && !string.IsNullOrEmpty(ConfluenceTokenProtected);
 }

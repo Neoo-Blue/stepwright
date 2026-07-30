@@ -1,5 +1,6 @@
 using Stepwright.Ai;
 using Stepwright.Config;
+using Stepwright.Model;
 using Stepwright.Render;
 
 namespace Stepwright.Ui;
@@ -52,8 +53,21 @@ public sealed class SettingsForm : Form
     private readonly LinkLabel _aiKeyLink = new();
     private readonly Label _aiHint = new();
 
+    private readonly ComboBox _exportFormat = new();
+    private readonly Label _formatDetail = new();
+
+    private readonly TextBox _huduUrl = new();
+    private readonly TextBox _huduKey = new();
+    private readonly Label _huduResult = new();
+    private readonly TextBox _confluenceSite = new();
+    private readonly TextBox _confluenceEmail = new();
+    private readonly TextBox _confluenceToken = new();
+    private readonly Label _confluenceResult = new();
+
     private Color _chosenMarker;
     private bool _keyEdited;
+    private bool _huduKeyEdited;
+    private bool _confluenceTokenEdited;
 
     public SettingsForm(AppSettings settings)
     {
@@ -82,6 +96,8 @@ public sealed class SettingsForm : Form
         tabs.TabPages.Add(BuildRecordingTab());
         tabs.TabPages.Add(BuildLookTab());
         tabs.TabPages.Add(BuildAssistantTab());
+        tabs.TabPages.Add(BuildFormatTab());
+        tabs.TabPages.Add(BuildPublishingTab());
 
         Controls.Add(tabs);
         Controls.Add(BuildFooter());
@@ -362,6 +378,310 @@ public sealed class SettingsForm : Form
         return page;
     }
 
+    private TabPage BuildFormatTab()
+    {
+        (TabPage page, TableLayoutPanel table) = NewPage("Format");
+
+        AddNote(
+            table,
+            "A format decides how a guide is written out: the typeface, the sizes, whether the"
+            + " styling travels on each element, and how pictures are carried. Every export and"
+            + " every publish uses one, and a format is a small file you can share.");
+
+        _exportFormat.DropDownStyle = ComboBoxStyle.DropDownList;
+        ReloadFormats(_settings.ExportFormat);
+        _exportFormat.SelectedIndexChanged += (_, _) => ShowFormatDetail();
+
+        AddField(table, "Format used when exporting", _exportFormat);
+
+        _formatDetail.AutoSize = false;
+        _formatDetail.Height = 58;
+        _formatDetail.Dock = DockStyle.Fill;
+        _formatDetail.ForeColor = Theme.Muted;
+        _formatDetail.Font = Theme.UiSmall;
+        _formatDetail.Margin = new Padding(1, 0, 0, 10);
+        table.Controls.Add(_formatDetail);
+
+        var buttons = new FlowLayoutPanel
+        {
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            Dock = DockStyle.Fill,
+            Margin = new Padding(0, 0, 0, 12),
+            BackColor = Color.Transparent,
+            WrapContents = true,
+        };
+
+        buttons.Controls.Add(Action("Import a format", ImportFormat));
+        buttons.Controls.Add(Action("Export this one", ExportFormat));
+        buttons.Controls.Add(Action("Duplicate and edit", DuplicateFormat));
+        buttons.Controls.Add(Action("Open the folder", OpenFormatFolder));
+        buttons.Controls.Add(Action("Delete", DeleteFormat));
+
+        table.Controls.Add(buttons);
+
+        AddNote(
+            table,
+            "The four that ship with the app cannot be deleted. Duplicate one to make your own,"
+            + " which opens the file in your editor. It is plain text, so a format can be kept"
+            + " beside your other configuration and handed to someone else.");
+
+        ShowFormatDetail();
+        return page;
+    }
+
+    private TabPage BuildPublishingTab()
+    {
+        (TabPage page, TableLayoutPanel table) = NewPage("Publishing");
+
+        AddNote(
+            table,
+            "Sends a finished guide straight into a knowledge base, with no file in between."
+            + " Every secret here is encrypted for this Windows account.");
+
+        AddHeading(table, "Hudu");
+
+        _huduUrl.Text = _settings.HuduBaseUrl;
+        AddField(table, "Address of your site, for example https://help.yourcompany.com", _huduUrl);
+
+        _huduKey.UseSystemPasswordChar = true;
+        _huduKey.Text = string.IsNullOrEmpty(_settings.HuduKeyProtected) ? string.Empty : new string('*', 24);
+        _huduKey.TextChanged += (_, _) => _huduKeyEdited = true;
+        AddField(table, "API key, from Admin then API in Hudu", _huduKey);
+
+        var huduTest = Action("Test the connection", async () => await TestHuduAsync().ConfigureAwait(true));
+        table.Controls.Add(huduTest);
+
+        _huduResult.AutoSize = false;
+        _huduResult.Height = 34;
+        _huduResult.Dock = DockStyle.Fill;
+        _huduResult.ForeColor = Theme.Muted;
+        _huduResult.Margin = new Padding(0, 6, 0, 4);
+        table.Controls.Add(_huduResult);
+
+        AddHeading(table, "Confluence");
+
+        _confluenceSite.Text = _settings.ConfluenceSite;
+        AddField(table, "Address of your site, for example https://yourcompany.atlassian.net", _confluenceSite);
+
+        _confluenceEmail.Text = _settings.ConfluenceEmail;
+        AddField(table, "The email address you sign in with", _confluenceEmail);
+
+        _confluenceToken.UseSystemPasswordChar = true;
+        _confluenceToken.Text = string.IsNullOrEmpty(_settings.ConfluenceTokenProtected)
+            ? string.Empty
+            : new string('*', 24);
+
+        _confluenceToken.TextChanged += (_, _) => _confluenceTokenEdited = true;
+        AddField(table, "API token, from your Atlassian account security page", _confluenceToken);
+
+        var confluenceTest = Action("Test the connection", async () => await TestConfluenceAsync().ConfigureAwait(true));
+        table.Controls.Add(confluenceTest);
+
+        _confluenceResult.AutoSize = false;
+        _confluenceResult.Height = 34;
+        _confluenceResult.Dock = DockStyle.Fill;
+        _confluenceResult.ForeColor = Theme.Muted;
+        _confluenceResult.Margin = new Padding(0, 6, 0, 4);
+        table.Controls.Add(_confluenceResult);
+
+        return page;
+    }
+
+    private Button Action(string text, Action work)
+    {
+        var button = new Button
+        {
+            Text = text,
+            AutoSize = true,
+            MinimumSize = new Size(120, 30),
+            Margin = new Padding(0, 2, 8, 6),
+        };
+
+        Theme.StyleButton(button);
+        button.Click += (_, _) => work();
+        return button;
+    }
+
+    // ------------------------------------------------------------------ formats
+
+    private void ReloadFormats(string? chosen)
+    {
+        _exportFormat.Items.Clear();
+
+        foreach (FormatProfile profile in FormatProfiles.All())
+        {
+            _exportFormat.Items.Add(profile.Name);
+        }
+
+        int index = chosen is null ? -1 : _exportFormat.Items.IndexOf(chosen);
+        _exportFormat.SelectedIndex = index >= 0 ? index : 0;
+    }
+
+    private FormatProfile ChosenFormat() => FormatProfiles.Find(_exportFormat.SelectedItem as string);
+
+    private void ShowFormatDetail()
+    {
+        FormatProfile profile = ChosenFormat();
+        string kind = profile.IsBuiltIn ? "Ships with the app" : "Yours, saved on this machine";
+        _formatDetail.Text = profile.Description + Environment.NewLine + kind;
+    }
+
+    private void ImportFormat()
+    {
+        using var dialog = new OpenFileDialog { Filter = FormatProfiles.FileFilter };
+
+        if (dialog.ShowDialog(this) != DialogResult.OK)
+        {
+            return;
+        }
+
+        FormatProfile? loaded = FormatProfiles.Load(dialog.FileName);
+
+        if (loaded is null)
+        {
+            MessageBox.Show(this, "That file is not a format Stepwright understands.", "Stepwright");
+            return;
+        }
+
+        FormatProfiles.Save(loaded);
+        ReloadFormats(loaded.Name);
+        ShowFormatDetail();
+    }
+
+    private void ExportFormat()
+    {
+        FormatProfile profile = ChosenFormat();
+
+        using var dialog = new SaveFileDialog
+        {
+            Filter = FormatProfiles.FileFilter,
+            FileName = profile.Name + FormatProfiles.FileExtension,
+        };
+
+        if (dialog.ShowDialog(this) != DialogResult.OK)
+        {
+            return;
+        }
+
+        try
+        {
+            FormatProfiles.Export(profile, dialog.FileName);
+        }
+        catch (Exception error)
+        {
+            MessageBox.Show(this, "The format could not be written. " + error.Message, "Stepwright");
+        }
+    }
+
+    private void DuplicateFormat()
+    {
+        FormatProfile copy = ChosenFormat().Copy();
+        copy.Name = copy.Name + " copy";
+        copy.Description = "Your own version.";
+
+        FormatProfiles.Save(copy);
+        ReloadFormats(copy.Name);
+        ShowFormatDetail();
+        OpenFormatFolder();
+    }
+
+    private void OpenFormatFolder()
+    {
+        try
+        {
+            Directory.CreateDirectory(FormatProfiles.Folder);
+
+            using var process = new System.Diagnostics.Process();
+            process.StartInfo.FileName = FormatProfiles.Folder;
+            process.StartInfo.UseShellExecute = true;
+            process.Start();
+        }
+        catch
+        {
+            // Nothing sensible to do when the folder cannot be shown.
+        }
+    }
+
+    private void DeleteFormat()
+    {
+        FormatProfile profile = ChosenFormat();
+
+        if (profile.IsBuiltIn)
+        {
+            MessageBox.Show(this, "The formats that ship with the app cannot be deleted.", "Stepwright");
+            return;
+        }
+
+        if (MessageBox.Show(
+                this,
+                $"Delete the format {profile.Name}?",
+                "Stepwright",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Question) != DialogResult.Yes)
+        {
+            return;
+        }
+
+        FormatProfiles.Delete(profile.Name);
+        ReloadFormats(null);
+        ShowFormatDetail();
+    }
+
+    // ------------------------------------------------------------------ publishing
+
+    private async Task TestHuduAsync()
+    {
+        _huduResult.ForeColor = Theme.Muted;
+        _huduResult.Text = "Talking to Hudu...";
+
+        try
+        {
+            string key = _huduKeyEdited ? _huduKey.Text.Trim() : _settings.GetHuduKey();
+            var client = new Publish.HuduClient(_huduUrl.Text.Trim(), key);
+
+            using var cancel = new CancellationTokenSource(TimeSpan.FromSeconds(45));
+            string message = await client.CheckAsync(cancel.Token).ConfigureAwait(true);
+
+            _huduResult.ForeColor = Theme.Good;
+            _huduResult.Text = message;
+        }
+        catch (Exception error)
+        {
+            _huduResult.ForeColor = Theme.Record;
+            _huduResult.Text = StepwrightText.Shorten(error.Message, 180);
+        }
+    }
+
+    private async Task TestConfluenceAsync()
+    {
+        _confluenceResult.ForeColor = Theme.Muted;
+        _confluenceResult.Text = "Talking to Confluence...";
+
+        try
+        {
+            string token = _confluenceTokenEdited
+                ? _confluenceToken.Text.Trim()
+                : _settings.GetConfluenceToken();
+
+            var client = new Publish.ConfluenceClient(
+                _confluenceSite.Text.Trim(),
+                _confluenceEmail.Text.Trim(),
+                token);
+
+            using var cancel = new CancellationTokenSource(TimeSpan.FromSeconds(45));
+            string message = await client.CheckAsync(cancel.Token).ConfigureAwait(true);
+
+            _confluenceResult.ForeColor = Theme.Good;
+            _confluenceResult.Text = message;
+        }
+        catch (Exception error)
+        {
+            _confluenceResult.ForeColor = Theme.Record;
+            _confluenceResult.Text = StepwrightText.Shorten(error.Message, 180);
+        }
+    }
+
     // ------------------------------------------------------------------ assistant actions
 
     private AiProvider SelectedProvider =>
@@ -534,6 +854,21 @@ public sealed class SettingsForm : Form
         if (_keyEdited)
         {
             _settings.SetAiKey(_aiKey.Text.Trim());
+        }
+
+        _settings.ExportFormat = _exportFormat.SelectedItem as string ?? "Stepwright";
+
+        _settings.HuduBaseUrl = _huduUrl.Text.Trim();
+        if (_huduKeyEdited)
+        {
+            _settings.SetHuduKey(_huduKey.Text.Trim());
+        }
+
+        _settings.ConfluenceSite = _confluenceSite.Text.Trim();
+        _settings.ConfluenceEmail = _confluenceEmail.Text.Trim();
+        if (_confluenceTokenEdited)
+        {
+            _settings.SetConfluenceToken(_confluenceToken.Text.Trim());
         }
 
         _settings.Save();

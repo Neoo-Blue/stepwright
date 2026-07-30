@@ -101,6 +101,12 @@ public sealed class Step
     /// <summary>File name of the screenshot inside the guide folder. Empty for text only steps.</summary>
     public string Image { get; set; } = string.Empty;
 
+    /// <summary>
+    /// Set aside when a step is turned into words only, so the picture can come back without
+    /// recording the step again.
+    /// </summary>
+    public string HiddenImage { get; set; } = string.Empty;
+
     public PointI? ClickPoint { get; set; }
     public RectI? ElementArea { get; set; }
 
@@ -141,6 +147,7 @@ public sealed class Step
             Notes = Notes,
             Moment = Moment,
             Image = Image,
+            HiddenImage = HiddenImage,
             ClickPoint = ClickPoint,
             ElementArea = ElementArea,
             WindowArea = WindowArea,

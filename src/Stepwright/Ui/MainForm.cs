@@ -28,6 +28,7 @@ public sealed class MainForm : Form
     private readonly ToolStripButton _recordButton = new();
     private readonly ToolStripButton _stopButton = new();
     private readonly ToolStripDropDownButton _exportButton = new();
+    private readonly ToolStripDropDownButton _publishButton = new();
     private readonly ToolStripButton _polishButton = new();
     private readonly ToolStripLabel _toolLabel = new();
 
@@ -172,6 +173,14 @@ public sealed class MainForm : Form
         _exportButton.DropDownItems.Add(Item("Copy the HTML source", (_, _) => CopyHtmlSource()));
         _exportButton.DropDownItems.Add(Item("Copy as plain text", (_, _) => CopyPlainText()));
         strip.Items.Add(_exportButton);
+
+        _publishButton.Text = "Publish";
+        _publishButton.ShowDropDownArrow = true;
+        _publishButton.DropDown.Renderer = new ThemeRenderer();
+        _publishButton.DropDown.BackColor = Theme.Panel;
+        _publishButton.DropDownItems.Add(Item("Send to Hudu", (_, _) => Publish(PublishDestination.Hudu)));
+        _publishButton.DropDownItems.Add(Item("Send to Confluence", (_, _) => Publish(PublishDestination.Confluence)));
+        strip.Items.Add(_publishButton);
 
         strip.Items.Add(new ToolStripSeparator());
         strip.Items.Add(Button("Settings", "Change how Stepwright records and looks", (_, _) => OpenSettings()));
@@ -430,6 +439,8 @@ public sealed class MainForm : Form
         more.DropDownItems.Add(Item("Apply this framing to every step", (_, _) => ApplyFramingToAll()));
         more.DropDownItems.Add(new ToolStripSeparator());
         more.DropDownItems.Add(Item("Animate every step that can be", (_, _) => AnimateAll()));
+        more.DropDownItems.Add(new ToolStripSeparator());
+        more.DropDownItems.Add(Item("Use words only for this step", (_, _) => DropPicture()));
         more.DropDownItems.Add(Item("Preview this animation", (_, _) => PreviewAnimation()));
         more.DropDownItems.Add(Item("Save this animation as a file", (_, _) => SaveAnimation()));
 
@@ -1551,6 +1562,43 @@ public sealed class MainForm : Form
         MarkDirty();
     }
 
+    /// <summary>
+    /// Turns a step into words only. The picture stays in the guide file until it is saved,
+    /// so this can be undone by pressing it again, and a step written by hand never had one.
+    /// </summary>
+    private void DropPicture()
+    {
+        if (SelectedStep is not { } step)
+        {
+            return;
+        }
+
+        if (step.HasImage)
+        {
+            step.HiddenImage = step.Image;
+            step.Image = string.Empty;
+            step.Animate = false;
+            DropThumbnail(step);
+            Status("This step is now words only. Press again to bring the picture back.");
+        }
+        else if (!string.IsNullOrEmpty(step.HiddenImage))
+        {
+            step.Image = step.HiddenImage;
+            step.HiddenImage = string.Empty;
+            DropThumbnail(step);
+            Status("The picture is back.");
+        }
+        else
+        {
+            Status("This step never had a picture.");
+            return;
+        }
+
+        MarkDirty();
+        LoadSelectedStep();
+        _list.Invalidate();
+    }
+
     private void ToggleSkip()
     {
         if (SelectedStep is not { } step)
@@ -1913,8 +1961,8 @@ public sealed class MainForm : Form
         {
             HtmlExporter.Export(_guide, _settings, dialog.FileName, new HtmlOptions
             {
+                Format = FormatProfiles.Find(_settings.ExportFormat),
                 EmbedImages = embed,
-                UseJpeg = false,
             });
 
             return dialog.FileName;
@@ -2081,9 +2129,8 @@ public sealed class MainForm : Form
             string fragment = HtmlExporter.Build(_guide, _settings, new HtmlOptions
             {
                 Fragment = true,
+                Format = FormatProfiles.Find(_settings.ExportFormat),
                 EmbedImages = true,
-                UseJpeg = true,
-                MaxImageWidth = 1100,
             });
 
             var data = new DataObject();
@@ -2110,9 +2157,8 @@ public sealed class MainForm : Form
             string fragment = HtmlExporter.Build(_guide, _settings, new HtmlOptions
             {
                 Fragment = true,
+                Format = FormatProfiles.Find(_settings.ExportFormat),
                 EmbedImages = true,
-                UseJpeg = true,
-                MaxImageWidth = 1100,
             });
 
             Clipboard.SetText(fragment);
@@ -2236,6 +2282,30 @@ public sealed class MainForm : Form
             _polishButton.Enabled = true;
             Cursor = Cursors.Default;
         }
+    }
+
+    /// <summary>Sends the guide straight into a knowledge base.</summary>
+    private void Publish(PublishDestination destination)
+    {
+        if (_guide.Steps.Count == 0)
+        {
+            Warn("There is nothing to publish yet.");
+            return;
+        }
+
+        bool ready = destination == PublishDestination.Hudu ? _settings.HasHudu : _settings.HasConfluence;
+
+        if (!ready)
+        {
+            string name = destination == PublishDestination.Hudu ? "Hudu" : "Confluence";
+            Warn($"{name} is not set up yet. Add the connection under Settings, on the Publishing page.");
+            OpenSettings();
+            return;
+        }
+
+        using var dialog = new PublishForm(_settings, _guide, destination);
+        dialog.ShowDialog(this);
+        Status("Ready.");
     }
 
     private void OpenSettings()
