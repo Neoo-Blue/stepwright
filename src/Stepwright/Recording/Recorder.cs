@@ -760,10 +760,16 @@ public sealed class Recorder : IDisposable
         ElementInfo element = focused ?? new ElementInfo();
         string place = AppPlace(element);
 
-        // Fail closed. If the target could not be identified there is no way to know it was
-        // not a password box, and the typed characters must not be written down.
+        // A remote session shows another computer as a picture, so the system reports the
+        // viewer's own window and never a password box. Failing closed there would blank every
+        // value typed on the far machine, which is most of what a remote guide is made of, so
+        // typing is written down and the person's own redaction patterns are what guard it.
+        bool remote = element.IsRemoteSession || UiInspector.IsRemoteViewer(ForegroundProcess());
+
+        // Fail closed everywhere else. If the target could not be identified there is no way to
+        // know it was not a password box, and the typed characters must not be written down.
         bool unknownTarget = focused is null;
-        bool secret = _settings.RedactPasswords && (element.IsPassword || unknownTarget);
+        bool secret = _settings.RedactPasswords && !remote && (element.IsPassword || unknownTarget);
         string shown = secret ? string.Empty : Redact(work.Text);
 
         var step = new Step
@@ -909,6 +915,27 @@ public sealed class Recorder : IDisposable
         _lastElement = element;
         Interlocked.Increment(ref _stepCount);
         StepAdded?.Invoke(this, step);
+    }
+
+    /// <summary>Which process owns the window in front, or zero when that cannot be told.</summary>
+    private static int ForegroundProcess()
+    {
+        try
+        {
+            IntPtr window = NativeMethods.GetForegroundWindow();
+
+            if (window == IntPtr.Zero)
+            {
+                return 0;
+            }
+
+            NativeMethods.GetWindowThreadProcessId(window, out uint pid);
+            return (int)pid;
+        }
+        catch
+        {
+            return 0;
+        }
     }
 
     private string Redact(string text)

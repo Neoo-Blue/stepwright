@@ -252,6 +252,18 @@ picture, with the click marked on it, it names what is actually there. With this
 step text and control names are sent. With it on, the picture for each step goes to the service
 you chose, and nowhere else.
 
+### Pictures you already have
+
+Not everything worth writing up was recorded live. **Add pictures** takes a folder of
+screenshots, a set someone sent you, or anything else you have, and turns each one into a step.
+They are ordered the way their names read, so picture 2 lands before picture 10, and the Up and
+Down buttons fix anything the names got wrong. The files are copied into the guide, so deleting
+the originals afterwards cannot empty a guide that looked finished.
+
+Then you choose who writes. Type the steps yourself, or let the assistant read the pictures and
+draft them, which it does one at a time with the step before it as context so the result reads
+as a guide rather than a list of captions. Either way you can edit every word afterwards.
+
 ### Recording inside a remote session
 
 Remote Desktop, ScreenConnect, Splashtop, TeamViewer, AnyDesk and the rest all show the far
@@ -267,6 +279,13 @@ ScreenConnect", with the far machine named the same way on every step.
 This is the case the picture switch was built for. Turn on **let the assistant see each
 screenshot** and the assistant reads the pixels, which is the only thing that can name a button
 on the far side.
+
+One thing to know before you record an admin session. Passwords are hidden when Windows says
+the box is a password box, and there is no such signal behind a remote picture, so anything
+typed on the far machine is written into the guide as text. That is deliberate: a remote guide
+is mostly made of the values you type, and blanking them would leave it useless. Your own
+redaction patterns under Settings still apply, and the recorder can be paused, so use one of
+those when credentials are about to be typed.
 
 ## Install
 

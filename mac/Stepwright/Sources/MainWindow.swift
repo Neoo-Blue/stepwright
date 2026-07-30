@@ -119,6 +119,7 @@ final class MainWindow: NSWindowController, NSTableViewDataSource, NSTableViewDe
 
         row.addArrangedSubview(button("Add note", #selector(addNoteTapped)))
         row.addArrangedSubview(button("Add heading", #selector(addHeadingTapped)))
+        row.addArrangedSubview(button("Add pictures", #selector(addPicturesTapped)))
         row.addArrangedSubview(button("Improve with AI", #selector(improveTapped)))
 
         let exports = NSPopUpButton(title: "Export", target: nil, action: nil)
@@ -757,6 +758,132 @@ final class MainWindow: NSWindowController, NSTableViewDataSource, NSTableViewDe
     }
 
     // ------------------------------------------------------------------ step editing
+
+    /// Turns pictures a person already has into steps. Not everything worth writing up was
+    /// recorded live: a colleague sends a folder of screenshots, or the work happened on a
+    /// machine this app was never running on.
+    ///
+    /// The pictures are copied into the guide rather than referenced, so moving or deleting
+    /// the originals afterwards cannot empty a guide that looked finished.
+    @objc func addPicturesTapped() {
+        let panel = NSOpenPanel()
+        panel.title = "Choose the pictures to turn into steps"
+        panel.allowsMultipleSelection = true
+        panel.canChooseDirectories = false
+        panel.allowedContentTypes = [.png, .jpeg, .bmp, .gif, .tiff]
+
+        guard panel.runModal() == .OK, !panel.urls.isEmpty else { return }
+
+        // Screenshots are numbered by the tool that took them, so the order a person means is
+        // the one their names imply. A plain sort would put 10 before 2.
+        let chosen = panel.urls.sorted {
+            $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending
+        }
+
+        if guide.mediaFolder == nil {
+            guide.mediaFolder = GuideStore.createWorkFolder().appendingPathComponent("media")
+        }
+
+        guard let media = guide.mediaFolder else { return }
+        try? FileManager.default.createDirectory(at: media, withIntermediateDirectories: true)
+
+        let row = table.selectedRow
+        let first = row < 0 ? guide.Steps.count : row + 1
+        var added = 0
+
+        for source in chosen {
+            let name = "picture" + String(UUID().uuidString.prefix(12)) + "\(added)." + source.pathExtension
+
+            do {
+                try FileManager.default.copyItem(at: source, to: media.appendingPathComponent(name))
+            } catch {
+                warn("\(source.lastPathComponent) could not be added. " + error.localizedDescription)
+                continue
+            }
+
+            let step = Step()
+            step.Kind = .screenshot
+            step.Text = Assistant.blank
+            step.OriginalText = step.Text
+            step.Image = name
+            step.ShowClickMarker = false
+            step.ShowElementOutline = false
+
+            // There is no click to zoom towards, so the whole picture is the step.
+            step.AutoZoom = false
+
+            guide.Steps.insert(step, at: first + added)
+            added += 1
+        }
+
+        guard added > 0 else { return }
+
+        table.reloadData()
+        table.selectRowIndexes(IndexSet(integer: first), byExtendingSelection: false)
+        markDirty()
+        status("Added \(added) pictures as steps.")
+
+        guard settings.aiEnabled, settings.canAskAssistant else { return }
+
+        let alert = NSAlert()
+        alert.messageText = "Stepwright"
+        alert.informativeText = "Added \(added) pictures as steps."
+            + "\n\nWould you like the assistant to read them and draft the wording? You can edit"
+            + " anything it writes, and it only reads the pictures you just added."
+        alert.addButton(withTitle: "Let the assistant draft")
+        alert.addButton(withTitle: "I will write it")
+
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        draftPictures(Array(guide.Steps[first..<(first + added)]))
+    }
+
+    /// Has the assistant write the wording for pictures that have none.
+    private func draftPictures(_ steps: [Step]) {
+        let guide = self.guide
+        let settings = self.settings
+        var pictures: [String: Data] = [:]
+
+        status("Preparing the pictures...")
+
+        for step in steps where step.hasImage {
+            if let picture = Renderer.render(guide: guide, step: step, settings: settings, maxWidth: 1400),
+               let data = ImageFile.jpegData(picture, quality: 0.8) {
+                pictures[step.Id] = data
+            }
+        }
+
+        Task { @MainActor in
+            do {
+                let written = try await Assistant.draft(
+                    guide: guide,
+                    steps: steps,
+                    settings: settings,
+                    pictureFor: { step in pictures[step.Id] },
+                    progress: { [weak self] message in
+                        Task { @MainActor in self?.status(message) }
+                    })
+
+                if guide.Title.isEmpty || guide.Title == "Untitled guide" {
+                    let (title, summary) = try await Assistant.suggestHeading(guide: guide, settings: settings)
+                    if !title.isEmpty {
+                        guide.Title = title
+                        if guide.Summary.isEmpty { guide.Summary = summary }
+                        self.loadGuideFields()
+                    }
+                }
+
+                self.table.reloadData()
+                self.loadSelectedStep()
+                self.markDirty()
+                self.status(written == 0
+                    ? "The assistant could not read those pictures. Write the steps yourself."
+                    : "The assistant drafted \(written) steps. Read them before you rely on them.")
+            } catch {
+                self.warn("The assistant could not finish. " + error.localizedDescription)
+            }
+        }
+    }
 
     @objc func addNoteTapped() { insertStep(kind: .note) }
 

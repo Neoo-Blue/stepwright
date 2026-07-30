@@ -151,6 +151,10 @@ public sealed class MainForm : Form
 
         strip.Items.Add(Button("Add note", "Insert a step with text only", (_, _) => InsertStep(StepKind.Note)));
         strip.Items.Add(Button("Add heading", "Start a new section", (_, _) => InsertStep(StepKind.Heading)));
+        strip.Items.Add(Button(
+            "Add pictures",
+            "Turn screenshots you already have into steps",
+            async (_, _) => await AddPicturesAsync().ConfigureAwait(true)));
         strip.Items.Add(new ToolStripSeparator());
 
         _polishButton.Text = "Improve with AI";
@@ -1498,6 +1502,202 @@ public sealed class MainForm : Form
         MarkDirty();
     }
 
+    /// <summary>
+    /// Turns pictures a person already has into steps. Not everything worth writing up was
+    /// recorded live: a colleague sends a folder of screenshots, or the work happened on a
+    /// machine this app was never running on.
+    ///
+    /// The pictures are copied into the guide rather than referenced, so moving or deleting
+    /// the originals afterwards cannot empty a guide that looked finished.
+    /// </summary>
+    private async Task AddPicturesAsync()
+    {
+        using var dialog = new OpenFileDialog
+        {
+            Title = "Choose the pictures to turn into steps",
+            Filter = "Pictures (*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.tif;*.tiff)"
+                + "|*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.tif;*.tiff|Every file (*.*)|*.*",
+            Multiselect = true,
+        };
+
+        if (dialog.ShowDialog(this) != DialogResult.OK || dialog.FileNames.Length == 0)
+        {
+            return;
+        }
+
+        // Screenshots are numbered by the tool that took them, so the order a person means is
+        // the one their names imply. A plain sort would put 10 before 2.
+        List<string> chosen = dialog.FileNames.OrderBy(Path.GetFileName, new NumberAwareOrder()).ToList();
+
+        if (string.IsNullOrEmpty(_guide.MediaFolder))
+        {
+            _guide.MediaFolder = Path.Combine(GuideStore.CreateWorkFolder(), "media");
+        }
+
+        Directory.CreateDirectory(_guide.MediaFolder);
+
+        int at = _list.SelectedIndex < 0 ? _guide.Steps.Count : _list.SelectedIndex + 1;
+        int first = at;
+        int added = 0;
+
+        Cursor = Cursors.WaitCursor;
+
+        try
+        {
+            foreach (string source in chosen)
+            {
+                string name = $"picture{DateTime.Now:yyyyMMddHHmmssfff}{added:D3}{Path.GetExtension(source)}";
+
+                try
+                {
+                    File.Copy(source, Path.Combine(_guide.MediaFolder, name), overwrite: false);
+                }
+                catch (Exception error)
+                {
+                    Warn($"{Path.GetFileName(source)} could not be added. {error.Message}");
+                    continue;
+                }
+
+                var step = new Step
+                {
+                    Kind = StepKind.Screenshot,
+                    Text = AiPolisher.Blank,
+                    Image = name,
+                    Moment = File.GetLastWriteTime(source),
+                    ShowClickMarker = false,
+                    ShowElementOutline = false,
+
+                    // There is no click to zoom towards, so the whole picture is the step.
+                    AutoZoom = false,
+                };
+
+                step.OriginalText = step.Text;
+                _guide.Steps.Insert(at + added, step);
+                added++;
+            }
+        }
+        finally
+        {
+            Cursor = Cursors.Default;
+        }
+
+        if (added == 0)
+        {
+            return;
+        }
+
+        RebuildList();
+        _list.SelectedIndex = first;
+        MarkDirty();
+        Status($"Added {added} pictures as steps.");
+
+        if (!_settings.AiEnabled || !_settings.CanAskAssistant)
+        {
+            _stepText.Focus();
+            _stepText.SelectAll();
+            return;
+        }
+
+        if (MessageBox.Show(
+                this,
+                $"Added {added} pictures as steps."
+                + Environment.NewLine
+                + Environment.NewLine
+                + "Would you like the assistant to read them and draft the wording? You can edit"
+                + " anything it writes, and it only reads the pictures you just added.",
+                "Stepwright",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Question) != DialogResult.Yes)
+        {
+            _stepText.Focus();
+            _stepText.SelectAll();
+            return;
+        }
+
+        await DraftPicturesAsync(_guide.Steps.Skip(first).Take(added).ToList()).ConfigureAwait(true);
+    }
+
+    /// <summary>Has the assistant write the wording for pictures that have none.</summary>
+    private async Task DraftPicturesAsync(List<Step> steps)
+    {
+        _polishButton.Enabled = false;
+        Cursor = Cursors.WaitCursor;
+
+        try
+        {
+            var progress = new Progress<string>(Status);
+            using var cancel = new CancellationTokenSource(TimeSpan.FromMinutes(20));
+
+            Status("Preparing the pictures...");
+            Guide guide = _guide;
+            AppSettings settings = _settings;
+            var wanted = new HashSet<string>(steps.Select(s => s.Id), StringComparer.Ordinal);
+
+            Dictionary<string, byte[]> pictures = await Task.Run(() =>
+            {
+                var built = new Dictionary<string, byte[]>(StringComparer.Ordinal);
+                foreach (Step step in guide.Steps.Where(s => wanted.Contains(s.Id) && s.HasImage))
+                {
+                    byte[]? picture = GuideRenderer.RenderJpeg(guide, step, settings, 1400, 80);
+                    if (picture is not null)
+                    {
+                        built[step.Id] = picture;
+                    }
+                }
+
+                return built;
+            }).ConfigureAwait(true);
+
+            var only = new Guide
+            {
+                Title = _guide.Title,
+                Summary = _guide.Summary,
+                MediaFolder = _guide.MediaFolder,
+            };
+
+            only.Steps.AddRange(steps);
+
+            int written = await AiPolisher
+                .DraftAsync(
+                    only,
+                    _settings,
+                    step => pictures.TryGetValue(step.Id, out byte[]? picture) ? picture : null,
+                    progress,
+                    cancel.Token)
+                .ConfigureAwait(true);
+
+            if (string.IsNullOrWhiteSpace(_guide.Title) || _guide.Title == "Untitled guide")
+            {
+                (string title, string summary) = await AiPolisher
+                    .SuggestHeadingAsync(_guide, _settings, cancel.Token)
+                    .ConfigureAwait(true);
+
+                if (!string.IsNullOrWhiteSpace(title))
+                {
+                    _guide.Title = title;
+                    _guide.Summary = string.IsNullOrWhiteSpace(_guide.Summary) ? summary : _guide.Summary;
+                    LoadGuideFields();
+                }
+            }
+
+            RebuildList();
+            LoadSelectedStep();
+            MarkDirty();
+            Status(written == 0
+                ? "The assistant could not read those pictures. Write the steps yourself."
+                : $"The assistant drafted {written} steps. Read them before you rely on them.");
+        }
+        catch (Exception error)
+        {
+            Warn("The assistant could not finish. " + error.Message);
+        }
+        finally
+        {
+            _polishButton.Enabled = true;
+            Cursor = Cursors.Default;
+        }
+    }
+
     private void MoveStep(int direction)
     {
         int index = _list.SelectedIndex;
@@ -2535,5 +2735,71 @@ internal static class ClipboardHtml
             endFragment);
 
         return realHeader + before + fragment + after;
+    }
+}
+
+/// <summary>
+/// Orders names the way a person reads them, so picture 2 comes before picture 10. A plain
+/// sort compares the digits as text and puts 10 first, which silently scrambles a folder of
+/// numbered screenshots.
+/// </summary>
+internal sealed class NumberAwareOrder : IComparer<string?>
+{
+    public int Compare(string? left, string? right)
+    {
+        if (left is null || right is null)
+        {
+            return string.CompareOrdinal(left, right);
+        }
+
+        int a = 0;
+        int b = 0;
+
+        while (a < left.Length && b < right.Length)
+        {
+            if (char.IsDigit(left[a]) && char.IsDigit(right[b]))
+            {
+                int startA = a;
+                int startB = b;
+
+                while (a < left.Length && char.IsDigit(left[a]))
+                {
+                    a++;
+                }
+
+                while (b < right.Length && char.IsDigit(right[b]))
+                {
+                    b++;
+                }
+
+                // Compared as numbers, so leading zeros make no difference.
+                string numberA = left[startA..a].TrimStart('0');
+                string numberB = right[startB..b].TrimStart('0');
+
+                if (numberA.Length != numberB.Length)
+                {
+                    return numberA.Length - numberB.Length;
+                }
+
+                int digits = string.CompareOrdinal(numberA, numberB);
+                if (digits != 0)
+                {
+                    return digits;
+                }
+
+                continue;
+            }
+
+            int letters = char.ToUpperInvariant(left[a]).CompareTo(char.ToUpperInvariant(right[b]));
+            if (letters != 0)
+            {
+                return letters;
+            }
+
+            a++;
+            b++;
+        }
+
+        return (left.Length - a) - (right.Length - b);
     }
 }

@@ -230,6 +230,118 @@ public static class AiPolisher
         return changed;
     }
 
+    /// <summary>
+    /// Writes the wording for steps that have a picture and nothing else, which is what a
+    /// person has after dropping a folder of screenshots in. There is no recorder text to
+    /// improve here, so the picture is the whole of the evidence, and the step before it is
+    /// given as context so the guide reads as one piece of writing rather than a list of
+    /// captions.
+    /// </summary>
+    public static async Task<int> DraftAsync(
+        Guide guide,
+        AppSettings settings,
+        Func<Step, byte[]?> pictureFor,
+        IProgress<string>? progress,
+        CancellationToken token)
+    {
+        List<Step> targets = guide.Steps
+            .Where(s => s.Kind != StepKind.Heading && s.HasImage && !s.Skip)
+            .ToList();
+
+        if (targets.Count == 0)
+        {
+            return 0;
+        }
+
+        int written = 0;
+        string previous = string.Empty;
+
+        for (int i = 0; i < targets.Count; i++)
+        {
+            token.ThrowIfCancellationRequested();
+            Step step = targets[i];
+            progress?.Report($"Reading picture {i + 1} of {targets.Count}");
+
+            byte[]? picture = pictureFor(step);
+
+            if (picture is null)
+            {
+                continue;
+            }
+
+            string system = HouseStyle
+                + " You are shown a screenshot from a procedure, and nothing else. Work out"
+                + " what the person did on this screen and write that as the instruction."
+                + " Say what is actually on the screen, using the words that appear in it."
+                + " Where an obvious control is the point of the picture, name it. Where the"
+                + " picture is a result rather than an action, say what the reader should see. "
+                + (settings.AiWriteNotes ? NoteStyle + " " : "Leave the note empty. ")
+                + "Reply with JSON only in the form {\"text\":\"...\",\"note\":\"...\"}.";
+
+            var context = new StringBuilder();
+
+            if (!string.IsNullOrWhiteSpace(guide.Title) && guide.Title != "Untitled guide")
+            {
+                context.AppendLine("Guide title: " + guide.Title);
+            }
+
+            if (!string.IsNullOrWhiteSpace(guide.Summary))
+            {
+                context.AppendLine("What the guide is for: " + guide.Summary);
+            }
+
+            context.AppendLine($"This is picture {i + 1} of {targets.Count}.");
+
+            if (previous.Length > 0)
+            {
+                context.AppendLine("The step before this one reads: " + previous);
+            }
+
+            if (!string.IsNullOrWhiteSpace(step.Text) && step.Text != Blank)
+            {
+                context.AppendLine("The person has already written: " + step.Text);
+                context.AppendLine("Keep what they meant and tidy the wording.");
+            }
+
+            string reply;
+
+            try
+            {
+                reply = await AiClient
+                    .CompleteAsync(settings, system, context.ToString(), new[] { picture }, token)
+                    .ConfigureAwait(true);
+            }
+            catch (Exception) when (i > 0)
+            {
+                progress?.Report($"Stopped after {i} pictures. The assistant could not be reached.");
+                return written;
+            }
+
+            (string text, string note) = Parse(reply);
+
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                continue;
+            }
+
+            step.Text = Tidy(text);
+            step.OriginalText = step.Text;
+            previous = step.Text;
+
+            if (settings.AiWriteNotes && !string.IsNullOrWhiteSpace(note))
+            {
+                step.Notes = Tidy(note);
+            }
+
+            written++;
+        }
+
+        return written;
+    }
+
+    /// <summary>What a picture step says until somebody writes something better.</summary>
+    public const string Blank = "Say what happens on this screen.";
+
     /// <summary>Suggests a title and a one line summary from the steps.</summary>
     public static async Task<(string Title, string Summary)> SuggestHeadingAsync(
         Guide guide,

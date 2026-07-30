@@ -459,6 +459,81 @@ enum Assistant {
         return changed
     }
 
+    /// What a picture step says until somebody writes something better.
+    static let blank = "Say what happens on this screen."
+
+    /// Writes the wording for steps that have a picture and nothing else, which is what a
+    /// person has after dropping a folder of screenshots in. There is no recorder text to
+    /// improve here, so the picture is the whole of the evidence, and the step before it is
+    /// given as context so the guide reads as one piece of writing rather than a list of
+    /// captions.
+    static func draft(
+        guide: Guide,
+        steps: [Step],
+        settings: Settings,
+        pictureFor: @escaping (Step) -> Data?,
+        progress: @escaping (String) -> Void) async throws -> Int {
+        var written = 0
+        var previous = ""
+
+        for (index, step) in steps.enumerated() {
+            progress("Reading picture \(index + 1) of \(steps.count)")
+
+            guard let picture = pictureFor(step) else { continue }
+
+            let system = houseStyle
+                + " You are shown a screenshot from a procedure, and nothing else. Work out"
+                + " what the person did on this screen and write that as the instruction."
+                + " Say what is actually on the screen, using the words that appear in it."
+                + " Where an obvious control is the point of the picture, name it. Where the"
+                + " picture is a result rather than an action, say what the reader should see. "
+                + (settings.aiWriteNotes ? noteStyle + " " : "Leave the note empty. ")
+                + "Reply with JSON only in the form {\"text\":\"...\",\"note\":\"...\"}."
+
+            var context = ""
+            if !guide.Title.isEmpty && guide.Title != "Untitled guide" {
+                context += "Guide title: \(guide.Title)\n"
+            }
+
+            if !guide.Summary.isEmpty {
+                context += "What the guide is for: \(guide.Summary)\n"
+            }
+
+            context += "This is picture \(index + 1) of \(steps.count).\n"
+
+            if !previous.isEmpty {
+                context += "The step before this one reads: \(previous)\n"
+            }
+
+            if !step.Text.isEmpty && step.Text != blank {
+                context += "The person has already written: \(step.Text)\n"
+                context += "Keep what they meant and tidy the wording.\n"
+            }
+
+            let reply = try await AiClient.complete(
+                settings: settings,
+                system: system,
+                user: context,
+                pictures: [picture])
+
+            guard let json = parse(reply), let text = json["text"] as? String, !text.isEmpty else {
+                continue
+            }
+
+            step.Text = tidy(text)
+            step.OriginalText = step.Text
+            previous = step.Text
+
+            if settings.aiWriteNotes, let note = json["note"] as? String, !note.isEmpty {
+                step.Notes = tidy(note)
+            }
+
+            written += 1
+        }
+
+        return written
+    }
+
     static func suggestHeading(guide: Guide, settings: Settings) async throws -> (String, String) {
         var payload = "These are the steps of a guide:\n"
 
