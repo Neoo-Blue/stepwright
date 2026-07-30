@@ -154,100 +154,162 @@ extension FileManager {
 // ---------------------------------------------------------------------- web page
 
 struct HtmlOptions {
+    /// A fragment drops the page shell so the markup can be pasted into another system.
     var fragment = false
-    var embedImages = true
-    var useJpeg = false
-    var allowAnimation = true
-    var maxImageWidth = 1400
-    var jpegQuality = 0.82
+
+    /// The rules to write by. Without one the standard look is used.
+    var format: FormatProfile?
+
+    /// Overrides the format when set, for an export that writes pictures beside the file.
+    var embedImages: Bool?
+
     var imageFolder: URL?
     var imageFolderName = "images"
+
+    /// Collect the pictures rather than writing them into the markup.
+    var collectImagesOnly = false
+}
+
+/// Written out as the document is built: the picture for each step, by step number. Used by a
+/// system that wants the pictures attached separately rather than carried inline.
+final class CollectedImages {
+    private(set) var pictures: [Int: Data] = [:]
+
+    func add(_ number: Int, _ data: Data) { pictures[number] = data }
 }
 
 enum HtmlExporter {
-    static func build(guide: Guide, settings: Settings, options: HtmlOptions) -> String {
-        var options = options
+    static func build(
+        guide: Guide,
+        settings: Settings,
+        options: HtmlOptions,
+        collected: CollectedImages? = nil) -> String {
+        let format = options.format ?? FormatProfiles.standard()
         var body = ""
         var number = 0
 
-        body += "<div class=\"sw-doc\">\n<header class=\"sw-head\">\n"
-        body += "  <h1>\(escape(guide.Title))</h1>\n"
-
-        if !guide.Summary.isEmpty {
-            body += "  <p class=\"sw-summary\">\(escape(guide.Summary))</p>\n"
+        if !format.Preamble.isEmpty {
+            body += format.Preamble + "\n"
         }
 
-        var facts: [String] = []
-        if !guide.Author.isEmpty { facts.append("By " + escape(guide.Author)) }
+        if format.SingleContainer {
+            body += "<div\(style(format, container(format)))>\n"
+        }
 
-        let stamp = DateFormatter()
-        stamp.dateFormat = "d MMMM yyyy"
-        facts.append(stamp.string(from: guide.Updated))
+        if format.IncludeTitle, !guide.Title.isEmpty {
+            body += format.UseHeadingTags
+                ? "<h1\(style(format, heading(format, format.TitleSize)))>\(escape(guide.Title))</h1>\n"
+                : "<div\(style(format, heading(format, format.TitleSize)))><b>\(escape(guide.Title))</b></div>\n"
+        }
 
-        let count = guide.visible.filter { $0.Kind != .heading }.count
-        facts.append(count == 1 ? "1 step" : "\(count) steps")
+        if format.IncludeSummary, !guide.Summary.isEmpty {
+            body += "<div\(style(format, bodyStyle(format)))>\(escape(guide.Summary))</div>\n"
+        }
 
-        body += "  <p class=\"sw-meta\">\(facts.joined(separator: " &nbsp;\u{00B7}&nbsp; "))</p>\n"
-        body += "</header>\n<ol class=\"sw-steps\">\n"
+        if format.IncludeMeta {
+            var facts: [String] = []
+            if !guide.Author.isEmpty { facts.append("By " + escape(guide.Author)) }
+
+            let stamp = DateFormatter()
+            stamp.dateFormat = "d MMMM yyyy"
+            facts.append(stamp.string(from: guide.Updated))
+
+            let count = guide.visible.filter { $0.Kind != .heading }.count
+            facts.append(count == 1 ? "1 step" : "\(count) steps")
+
+            // A numeric entity rather than a named one, because a system that treats the
+            // markup as strict xml will reject anything outside the five it knows.
+            body += "<div\(style(format, meta(format)))>\(facts.joined(separator: " &#160;\u{00B7}&#160; "))</div>\n"
+        }
+
+        var listOpen = false
+
+        func openList() {
+            if format.UseOrderedList, !listOpen {
+                body += "<ol\(style(format, listStyle(format)))>\n"
+                listOpen = true
+            }
+        }
+
+        func closeList() {
+            if listOpen {
+                body += "</ol>\n"
+                listOpen = false
+            }
+        }
+
+        openList()
 
         for step in guide.visible {
             if step.Kind == .heading {
-                body += "</ol>\n<h2 class=\"sw-section\">\(escape(step.Text))</h2>\n<ol class=\"sw-steps\">\n"
+                closeList()
+
+                body += format.UseHeadingTags
+                    ? "<h2\(style(format, heading(format, format.HeadingSize)))>\(escape(step.Text))</h2>\n"
+                    : "<div\(style(format, heading(format, format.HeadingSize)))><b>\(escape(step.Text))</b></div>\n"
+
+                openList()
                 continue
             }
 
             number += 1
-            body += "  <li class=\"sw-step\">\n    <div class=\"sw-row\">\n"
-            body += "      <div class=\"sw-num\">\(number)</div>\n"
-            body += "      <div class=\"sw-text\">\(escape(step.Text))</div>\n    </div>\n"
+            var text = escape(step.Text)
+            if format.BoldStepText { text = "<b>" + text + "</b>" }
+
+            if format.UseOrderedList {
+                body += "  <li\(style(format, item(format)))>\(text)\n"
+            } else {
+                let label = format.StepPrefix + String(number) + format.StepSuffix
+                body += "<div\(style(format, bodyStyle(format)))>\(escape(label)) \(text)</div>\n"
+            }
 
             if !step.Notes.isEmpty {
-                body += "    <p class=\"sw-note\">\(escape(step.Notes))</p>\n"
+                body += "    <div\(style(format, note(format)))>\(escape(format.NotePrefix))\(escape(step.Notes))</div>\n"
             }
 
-            if let source = imageSource(guide, step, settings, &options, number) {
-                body += "    <img class=\"sw-shot\" src=\"\(source)\" alt=\"\(escape(step.Text))\" loading=\"lazy\" />\n"
+            if let picture = self.picture(guide, step, settings, format, options, number, collected) {
+                body += "    " + picture + "\n"
             }
 
-            body += "  </li>\n"
+            if format.UseOrderedList { body += "  </li>\n" }
         }
 
-        body += "</ol>\n"
+        closeList()
 
-        if !options.fragment {
-            body += "<footer class=\"sw-foot\">Made with Stepwright</footer>\n"
+        if format.IncludeFooter, !options.fragment, !format.FooterText.isEmpty {
+            let stamp = DateFormatter()
+            stamp.dateFormat = "d MMMM yyyy"
+            let footer = format.FooterText.replacingOccurrences(
+                of: "{date}",
+                with: stamp.string(from: Date()))
+
+            body += "<div\(style(format, footerStyle(format)))>\(escape(footer))</div>\n"
         }
 
-        body += "</div>\n"
+        if format.SingleContainer { body += "</div>\n" }
 
-        if options.fragment {
-            // No page level rules, so pasting this cannot repaint the page it lands in.
-            return "<style>\n" + documentCss + "\n</style>\n" + body
+        // Styles written on each element carry themselves, so no stylesheet is needed.
+        if format.InlineStyles {
+            return options.fragment ? body : page(guide, body, "")
         }
 
-        return """
-        <!doctype html>
-        <html lang="en">
-        <head>
-        <meta charset="utf-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <title>\(escape(guide.Title))</title>
-        <style>
-        \(pageCss)
-        \(documentCss)
-        </style>
-        </head>
-        <body>
-        \(body)
-        </body>
-        </html>
-        """
+        let sheet = stylesheet(format)
+        return options.fragment
+            ? "<style>\n" + sheet + "\n</style>\n" + body
+            : page(guide, body, pageCss + "\n" + sheet)
     }
 
-    static func export(guide: Guide, settings: Settings, to url: URL, options: HtmlOptions) throws {
+    static func export(
+        guide: Guide,
+        settings: Settings,
+        to url: URL,
+        options: HtmlOptions) throws {
         var options = options
+        let format = options.format ?? FormatProfiles.standard()
 
-        if !options.embedImages {
+        if !(options.embedImages ?? format.EmbedImages) {
+            // The folder carries the document name, so two guides exported side by side
+            // cannot overwrite each other's pictures.
             let name = url.deletingPathExtension().lastPathComponent + " images"
             options.imageFolderName = name
             options.imageFolder = url.deletingLastPathComponent().appendingPathComponent(name)
@@ -257,64 +319,191 @@ enum HtmlExporter {
         try html.write(to: url, atomically: true, encoding: .utf8)
     }
 
-    private static func imageSource(
+    // ------------------------------------------------------------------ pictures
+
+    private static func picture(
         _ guide: Guide,
         _ step: Step,
         _ settings: Settings,
-        _ options: inout HtmlOptions,
-        _ number: Int) -> String? {
+        _ format: FormatProfile,
+        _ options: HtmlOptions,
+        _ number: Int,
+        _ collected: CollectedImages?) -> String? {
         guard step.hasImage else { return nil }
 
         var data: Data?
-        var mime = "image/png"
         var suffix = "png"
+        var mime = "image/png"
 
-        if step.Animate, options.allowAnimation,
-           let animation = StepAnimator.build(
+        // An animated step is written as an animation where the format allows one.
+        if step.Animate, format.AllowAnimation, let animation = StepAnimator.build(
             guide: guide,
             step: step,
             settings: settings,
             motion: GifMotion(rawValue: settings.gifMotion) ?? .normal,
             maxWidth: settings.gifWidth) {
             data = animation
-            mime = "image/gif"
             suffix = "gif"
-        } else if let picture = Renderer.render(
+            mime = "image/gif"
+        } else if let rendered = Renderer.render(
             guide: guide,
             step: step,
             settings: settings,
-            maxWidth: options.maxImageWidth) {
-            if options.useJpeg {
-                data = ImageFile.jpegData(picture, quality: options.jpegQuality)
-                mime = "image/jpeg"
+            maxWidth: format.ImageWidth) {
+            if format.UseJpeg {
+                data = ImageFile.jpegData(rendered, quality: format.JpegQuality / 100)
                 suffix = "jpg"
+                mime = "image/jpeg"
             } else {
-                data = ImageFile.pngData(picture)
+                data = ImageFile.pngData(rendered)
             }
         }
 
         guard let bytes = data else { return nil }
+        collected?.add(number, bytes)
 
-        if options.embedImages || options.imageFolder == nil {
-            return "data:\(mime);base64,\(bytes.base64EncodedString())"
+        // Some systems keep pictures beside the page and refer to them by name.
+        if !format.ImagePlaceholder.isEmpty {
+            return format.ImagePlaceholder.replacingOccurrences(
+                of: "{n}",
+                with: String(format: "%03d", number))
         }
 
-        guard let folder = options.imageFolder else { return nil }
-        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        if options.collectImagesOnly { return nil }
 
-        let name = String(format: "step%03d.%@", number, suffix)
-        try? bytes.write(to: folder.appendingPathComponent(name))
+        var source: String
 
-        let escaped = options.imageFolderName.addingPercentEncoding(
-            withAllowedCharacters: .urlPathAllowed) ?? options.imageFolderName
-        return escaped + "/" + name
+        if options.embedImages ?? format.EmbedImages, options.imageFolder == nil {
+            source = "data:\(mime);base64," + bytes.base64EncodedString()
+        } else if let folder = options.imageFolder {
+            try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let name = String(format: "step%03d.%@", number, suffix)
+            try? bytes.write(to: folder.appendingPathComponent(name))
+
+            let escaped = options.imageFolderName.addingPercentEncoding(
+                withAllowedCharacters: .urlPathAllowed) ?? options.imageFolderName
+            source = escaped + "/" + name
+        } else {
+            source = "data:\(mime);base64," + bytes.base64EncodedString()
+        }
+
+        let classAttribute = format.InlineStyles ? "" : " class=\"sw-shot\""
+        return "<img\(classAttribute)\(style(format, image(format))) src=\"\(source)\" alt=\"\(escape(step.Text))\" />"
     }
 
-    static func escape(_ value: String) -> String {
-        value.replacingOccurrences(of: "&", with: "&amp;")
-            .replacingOccurrences(of: "<", with: "&lt;")
-            .replacingOccurrences(of: ">", with: "&gt;")
-            .replacingOccurrences(of: "\"", with: "&quot;")
+    // ------------------------------------------------------------------ styling
+
+    /// Writes the style on the element when the format asks for it, and the class name
+    /// otherwise, so the same builder serves both kinds of document.
+    private static func style(_ format: FormatProfile, _ rules: (name: String, inline: String)) -> String {
+        if format.InlineStyles {
+            return rules.inline.isEmpty ? "" : " style=\"\(rules.inline)\""
+        }
+
+        return rules.name.isEmpty ? "" : " class=\"\(rules.name)\""
+    }
+
+    private static func font(_ format: FormatProfile) -> String {
+        format.FontFamily.isEmpty ? "" : "font-family:\(format.FontFamily);"
+    }
+
+    /// How the less important text is held back. A format that is not allowed to state a
+    /// colour fades it instead, so the receiving system keeps control of light and dark mode.
+    private static func quiet(_ format: FormatProfile) -> String {
+        format.AllowColor ? "color:#6c7480;" : "opacity:.7;"
+    }
+
+    private static func container(_ format: FormatProfile) -> (String, String) {
+        ("sw-doc", font(format) + "font-size:\(format.BodySize)px;")
+    }
+
+    private static func heading(_ format: FormatProfile, _ size: Int) -> (String, String) {
+        ("sw-section", font(format) + "font-size:\(size)px;font-weight:bold;margin-bottom:\(format.BlockSpacing)px;")
+    }
+
+    private static func bodyStyle(_ format: FormatProfile) -> (String, String) {
+        ("sw-text", font(format) + "font-size:\(format.BodySize)px;margin-bottom:\(format.BlockSpacing)px;")
+    }
+
+    private static func note(_ format: FormatProfile) -> (String, String) {
+        ("sw-note", font(format) + "font-size:\(format.NoteSize)px;margin-bottom:\(format.BlockSpacing)px;" + quiet(format))
+    }
+
+    private static func meta(_ format: FormatProfile) -> (String, String) {
+        ("sw-meta", font(format) + "font-size:\(format.MetaSize)px;margin-bottom:\(format.BlockSpacing)px;" + quiet(format))
+    }
+
+    private static func footerStyle(_ format: FormatProfile) -> (String, String) {
+        ("sw-foot", font(format) + "font-size:\(format.MetaSize)px;margin-top:18px;padding-top:8px;border-top:1px solid;" + quiet(format))
+    }
+
+    private static func listStyle(_ format: FormatProfile) -> (String, String) {
+        ("sw-steps", font(format) + "font-size:\(format.BodySize)px;margin-top:0px;margin-bottom:\(format.BlockSpacing)px;")
+    }
+
+    private static func item(_ format: FormatProfile) -> (String, String) {
+        ("sw-step", "margin-bottom:\(format.BlockSpacing)px;")
+    }
+
+    private static func image(_ format: FormatProfile) -> (String, String) {
+        var inline = "display:block;height:auto;max-width:100%;"
+        if format.ImageDisplayWidth > 0 { inline += "width:\(format.ImageDisplayWidth)px;" }
+        inline += "margin-top:8px;margin-bottom:\(format.BlockSpacing)px;"
+        if format.RoundImageCorners { inline += "border-radius:10px;" }
+        return ("sw-shot", inline)
+    }
+
+    /// The stylesheet used when the rules are not written onto each element.
+    private static func stylesheet(_ format: FormatProfile) -> String {
+        let family = format.FontFamily.isEmpty ? "system-ui, sans-serif" : format.FontFamily
+        let faded = format.AllowColor ? "color: #6c7480;" : "opacity: 0.75;"
+
+        var css = ""
+        css += ".sw-doc { max-width: 860px; margin: 0 auto; padding: 40px 24px 72px; font-family: \(family); font-size: \(format.BodySize)px; line-height: 1.55; }\n"
+        css += ".sw-doc h1 { font-size: \(format.TitleSize)px; line-height: 1.2; margin: 0 0 12px; }\n"
+        css += ".sw-section { font-size: \(format.HeadingSize)px; margin: 32px 0 10px; }\n"
+        css += ".sw-meta { font-size: \(format.MetaSize)px; \(faded) margin-bottom: 24px; }\n"
+        css += ".sw-steps { margin-top: 0; margin-bottom: \(format.BlockSpacing)px; padding-left: 22px; }\n"
+        css += ".sw-step { margin-bottom: \(format.BlockSpacing + 12)px; }\n"
+        css += ".sw-note { font-size: \(format.NoteSize)px; \(faded) margin: 6px 0 \(format.BlockSpacing)px; }\n"
+
+        var picture = ".sw-shot { display: block; height: auto; max-width: 100%;"
+        if format.ImageDisplayWidth > 0 { picture += " width: \(format.ImageDisplayWidth)px;" }
+        picture += " margin: 8px 0 \(format.BlockSpacing)px;"
+        if format.RoundImageCorners {
+            picture += " border: 1px solid rgba(128,128,128,0.3); border-radius: 10px;"
+        }
+
+        css += picture + " }\n"
+        css += ".sw-foot { font-size: \(format.MetaSize)px; \(faded) margin-top: 40px; padding-top: 12px; border-top: 1px solid rgba(128,128,128,0.3); }\n"
+        css += "@media print { .sw-step { break-inside: avoid; page-break-inside: avoid; } .sw-foot { display: none; } }\n"
+
+        if format.AllowColor {
+            css += ".sw-num { background: #2563eb; color: #fff; }\n"
+        }
+
+        return css
+    }
+
+    private static func page(_ guide: Guide, _ body: String, _ css: String) -> String {
+        var head = ""
+        if !css.isEmpty {
+            head = "<style>\n" + css + "\n</style>\n"
+        }
+
+        return """
+        <!doctype html>
+        <html lang="en">
+        <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>\(escape(guide.Title))</title>
+        \(head)</head>
+        <body>
+        \(body)
+        </body>
+        </html>
+        """
     }
 
     private static let pageCss = """
@@ -323,41 +512,12 @@ enum HtmlExporter {
     @media (prefers-color-scheme: dark) { body { background: #14161a; } }
     """
 
-    private static let documentCss = """
-    .sw-doc { max-width: 860px; margin: 0 auto; padding: 48px 24px 80px;
-      font-family: -apple-system, "SF Pro Text", "Segoe UI", system-ui, Helvetica, Arial, sans-serif;
-      color: #16181d; line-height: 1.55; }
-    .sw-head { border-bottom: 1px solid #e3e6ea; padding-bottom: 20px; margin-bottom: 28px; }
-    .sw-head h1 { font-size: 32px; line-height: 1.2; margin: 0 0 10px; }
-    .sw-summary { margin: 0 0 10px; font-size: 17px; color: #3c414a; }
-    .sw-meta { margin: 0; font-size: 13px; color: #767d88; text-transform: uppercase; letter-spacing: 0.6px; }
-    .sw-section { font-size: 20px; margin: 40px 0 8px; }
-    .sw-steps { list-style: none; margin: 0; padding: 0; }
-    .sw-step { margin: 0 0 30px; padding: 0; }
-    .sw-row { display: flex; align-items: flex-start; gap: 14px; }
-    .sw-num { flex: 0 0 auto; width: 30px; height: 30px; border-radius: 50%;
-      background: #2563eb; color: #fff; font-size: 15px; font-weight: 650;
-      display: flex; align-items: center; justify-content: center; margin-top: 1px; }
-    .sw-text { font-size: 17px; font-weight: 550; padding-top: 3px; }
-    .sw-note { margin: 8px 0 0 44px; font-size: 15px; color: #4b515c; }
-    .sw-shot { display: block; width: 100%; height: auto; margin: 14px 0 0 44px;
-      max-width: calc(100% - 44px); border: 1px solid #dfe3e8; border-radius: 10px;
-      box-shadow: 0 2px 10px rgba(15, 20, 30, 0.08); }
-    .sw-foot { margin-top: 48px; padding-top: 16px; border-top: 1px solid #e3e6ea;
-      font-size: 12px; color: #8b929c; text-align: center; }
-    @media (prefers-color-scheme: dark) {
-      .sw-doc { color: #e8eaee; }
-      .sw-head, .sw-foot { border-color: #2a2e36; }
-      .sw-summary { color: #b9bfc9; }
-      .sw-note { color: #b0b6c0; }
-      .sw-shot { border-color: #2a2e36; box-shadow: none; }
+    static func escape(_ value: String) -> String {
+        value.replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
     }
-    @media print {
-      .sw-doc { max-width: none; padding: 0; background: #fff; }
-      .sw-step { break-inside: avoid; page-break-inside: avoid; }
-      .sw-foot { display: none; }
-    }
-    """
 }
 
 // ---------------------------------------------------------------------- markdown

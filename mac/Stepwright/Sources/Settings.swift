@@ -117,6 +117,54 @@ final class Settings {
         set { store.set(newValue, forKey: "aiWriteNotes") }
     }
 
+    /// Name of the format used when writing a document. See FormatProfiles.
+    var exportFormat: String {
+        get { string("exportFormat", "Stepwright") }
+        set { store.set(newValue, forKey: "exportFormat") }
+    }
+
+    // Publishing straight into a knowledge base.
+    var huduSite: String {
+        get { string("huduSite", "") }
+        set { store.set(newValue, forKey: "huduSite") }
+    }
+
+    var huduFormat: String {
+        get { string("huduFormat", "Hudu") }
+        set { store.set(newValue, forKey: "huduFormat") }
+    }
+
+    var confluenceSite: String {
+        get { string("confluenceSite", "") }
+        set { store.set(newValue, forKey: "confluenceSite") }
+    }
+
+    var confluenceEmail: String {
+        get { string("confluenceEmail", "") }
+        set { store.set(newValue, forKey: "confluenceEmail") }
+    }
+
+    var confluenceFormat: String {
+        get { string("confluenceFormat", "Confluence") }
+        set { store.set(newValue, forKey: "confluenceFormat") }
+    }
+
+    var huduKey: String {
+        get { secret("hudu") }
+        set { setSecret("hudu", newValue) }
+    }
+
+    var confluenceToken: String {
+        get { secret("confluence") }
+        set { setSecret("confluence", newValue) }
+    }
+
+    var hasHudu: Bool { !huduSite.isEmpty && !huduKey.isEmpty }
+
+    var hasConfluence: Bool {
+        !confluenceSite.isEmpty && !confluenceEmail.isEmpty && !confluenceToken.isEmpty
+    }
+
     var libraryFolder: URL {
         get {
             if let path = store.string(forKey: "libraryFolder") {
@@ -138,38 +186,43 @@ final class Settings {
     var hasAiKey: Bool { !aiKey.isEmpty }
 
     var aiKey: String {
-        get {
-            let query: [String: Any] = [
-                kSecClass as String: kSecClassGenericPassword,
-                kSecAttrService as String: keyService,
-                kSecAttrAccount as String: keyAccount,
-                kSecReturnData as String: true,
-                kSecMatchLimit as String: kSecMatchLimitOne,
-            ]
+        get { secret(keyAccount) }
+        set { setSecret(keyAccount, newValue) }
+    }
 
-            var item: CFTypeRef?
-            guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
-                  let data = item as? Data,
-                  let text = String(data: data, encoding: .utf8) else { return "" }
+    /// Reads a secret from the keychain, where anything sensitive belongs.
+    private func secret(_ account: String) -> String {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keyService,
+            kSecAttrAccount as String: account,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
 
-            return text
-        }
-        set {
-            let query: [String: Any] = [
-                kSecClass as String: kSecClassGenericPassword,
-                kSecAttrService as String: keyService,
-                kSecAttrAccount as String: keyAccount,
-            ]
+        var item: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
+              let data = item as? Data,
+              let text = String(data: data, encoding: .utf8) else { return "" }
 
-            SecItemDelete(query as CFDictionary)
+        return text
+    }
 
-            guard !newValue.isEmpty, let data = newValue.data(using: .utf8) else { return }
+    private func setSecret(_ account: String, _ value: String) {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keyService,
+            kSecAttrAccount as String: account,
+        ]
 
-            var add = query
-            add[kSecValueData as String] = data
-            add[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlocked
-            SecItemAdd(add as CFDictionary, nil)
-        }
+        SecItemDelete(query as CFDictionary)
+
+        guard !value.isEmpty, let data = value.data(using: .utf8) else { return }
+
+        var add = query
+        add[kSecValueData as String] = data
+        add[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlocked
+        SecItemAdd(add as CFDictionary, nil)
     }
 
     // ------------------------------------------------------------------ helpers

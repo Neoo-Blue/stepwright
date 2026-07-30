@@ -138,6 +138,13 @@ final class MainWindow: NSWindowController, NSTableViewDataSource, NSTableViewDe
         exports.action = #selector(exportChosen(_:))
         row.addArrangedSubview(exports)
 
+        let publishing = NSPopUpButton(title: "Publish", target: nil, action: nil)
+        publishing.pullsDown = true
+        publishing.addItems(withTitles: ["Publish", "Send to Hudu", "Send to Confluence"])
+        publishing.target = self
+        publishing.action = #selector(publishChosen(_:))
+        row.addArrangedSubview(publishing)
+
         row.addArrangedSubview(NSView())
         row.addArrangedSubview(button("Permissions", #selector(permissionsTapped)))
         row.addArrangedSubview(button("Settings", #selector(settingsTapped)))
@@ -269,6 +276,7 @@ final class MainWindow: NSWindowController, NSTableViewDataSource, NSTableViewDe
         }
 
         tools.addArrangedSubview(button("Clear callouts", #selector(clearCalloutsTapped)))
+        tools.addArrangedSubview(button("Words only", #selector(wordsOnlyTapped)))
         tools.addArrangedSubview(NSView())
 
         preview.onRegion = { [weak self] region, tool in self?.regionDrawn(region, tool) }
@@ -1023,10 +1031,63 @@ final class MainWindow: NSWindowController, NSTableViewDataSource, NSTableViewDe
 
         runExport {
             var options = HtmlOptions()
+            options.format = FormatProfiles.find(settings.exportFormat)
             options.embedImages = embed
             try HtmlExporter.export(guide: guide, settings: settings, to: url, options: options)
             return url
         }
+    }
+
+    /// Sends the guide straight into a knowledge base.
+    @objc func publishChosen(_ sender: NSPopUpButton) {
+        let index = sender.indexOfSelectedItem
+        sender.selectItem(at: 0)
+
+        guard index == 1 || index == 2 else { return }
+        let destination: PublishDestination = index == 1 ? .hudu : .confluence
+
+        guard !guide.Steps.isEmpty else {
+            warn("There is nothing to publish yet.")
+            return
+        }
+
+        let ready = destination == .hudu ? settings.hasHudu : settings.hasConfluence
+
+        guard ready else {
+            let name = destination == .hudu ? "Hudu" : "Confluence"
+            warn("\(name) is not set up yet. Add the connection under Settings, on the Publishing page.")
+            settingsTapped()
+            return
+        }
+
+        let controller = PublishWindow(settings: settings, guide: guide, destination: destination)
+        controller.showModal()
+        status("Ready.")
+    }
+
+    /// Turns a step into words only, setting the picture aside rather than destroying it.
+    @objc func wordsOnlyTapped() {
+        guard let step = selectedStep else { return }
+
+        if step.hasImage {
+            step.HiddenImage = step.Image
+            step.Image = ""
+            step.Animate = false
+            dropThumbnail(step)
+            status("This step is now words only. Press again to bring the picture back.")
+        } else if !step.HiddenImage.isEmpty {
+            step.Image = step.HiddenImage
+            step.HiddenImage = ""
+            dropThumbnail(step)
+            status("The picture is back.")
+        } else {
+            status("This step never had a picture.")
+            return
+        }
+
+        markDirty()
+        loadSelectedStep()
+        table.reloadData()
     }
 
     private func exportMarkdown() {
@@ -1077,9 +1138,8 @@ final class MainWindow: NSWindowController, NSTableViewDataSource, NSTableViewDe
     private func copyRich() {
         var options = HtmlOptions()
         options.fragment = true
+        options.format = FormatProfiles.find(settings.exportFormat)
         options.embedImages = true
-        options.useJpeg = true
-        options.maxImageWidth = 1100
 
         let html = HtmlExporter.build(guide: guide, settings: settings, options: options)
         let board = NSPasteboard.general

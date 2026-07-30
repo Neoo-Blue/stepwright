@@ -83,6 +83,11 @@ final class Step: Codable {
     var Notes: String = ""
     var Moment: Date = Date()
     var Image: String = ""
+
+    /// Set aside when a step is turned into words only, so the picture can come back without
+    /// recording the step again.
+    var HiddenImage: String = ""
+
     var ClickPoint: PointI?
     var ElementArea: RectI?
     var WindowArea: RectI?
@@ -113,6 +118,7 @@ final class Step: Codable {
         clone.Notes = Notes
         clone.Moment = Moment
         clone.Image = Image
+        clone.HiddenImage = HiddenImage
         clone.ClickPoint = ClickPoint
         clone.ElementArea = ElementArea
         clone.WindowArea = WindowArea
