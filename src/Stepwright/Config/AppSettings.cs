@@ -67,6 +67,16 @@ public sealed class AppSettings
     /// <summary>A subscription token, encrypted the same way a key is.</summary>
     public string AiTokenProtected { get; set; } = string.Empty;
 
+    /// <summary>The Microsoft application this app signs in through, registered in your tenant.</summary>
+    public string AiAppId { get; set; } = string.Empty;
+
+    /// <summary>Blank means any work account. A tenant identifier pins it to one organisation.</summary>
+    public string AiTenant { get; set; } = string.Empty;
+
+    public string AiRefreshProtected { get; set; } = string.Empty;
+    public string AiAccessProtected { get; set; } = string.Empty;
+    public DateTimeOffset AiAccessExpires { get; set; }
+
     /// <summary>
     /// Lets the assistant look at the screenshot for each step, which is what makes it able
     /// to name what is actually on screen. Off by default, because pictures leaving the
@@ -208,6 +218,28 @@ public sealed class AppSettings
 
     public string GetAiToken() => Reveal(AiTokenProtected);
 
+    public string GetAiRefresh() => Reveal(AiRefreshProtected);
+
+    public string GetAiAccess() => Reveal(AiAccessProtected);
+
+    /// <summary>Keeps what a finished Microsoft sign in handed back, so it survives a restart.</summary>
+    public void RememberMicrosoft(Ai.MicrosoftSession session)
+    {
+        AiAccessProtected = Protect(session.AccessToken);
+        AiRefreshProtected = Protect(session.RefreshToken);
+        AiAccessExpires = session.Expires;
+    }
+
+    public void ForgetMicrosoft()
+    {
+        AiAccessProtected = string.Empty;
+        AiRefreshProtected = string.Empty;
+        AiAccessExpires = default;
+    }
+
+    [JsonIgnore]
+    public bool HasMicrosoftSignIn => !string.IsNullOrEmpty(AiRefreshProtected);
+
     public void SetHuduKey(string plainKey) => HuduKeyProtected = Protect(plainKey);
 
     public string GetHuduKey() => Reveal(HuduKeyProtected);
@@ -260,6 +292,7 @@ public sealed class AppSettings
     {
         "cli" => true,
         "token" => HasAiToken,
+        "microsoft" => HasMicrosoftSignIn,
         _ => HasAiKey || (AiBaseUrl ?? string.Empty).Contains("localhost", StringComparison.OrdinalIgnoreCase),
     };
 

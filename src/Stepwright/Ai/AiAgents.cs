@@ -17,10 +17,14 @@ public static class AiAuthKinds
     /// <summary>A subscription token sent straight to the service. Advanced, and see the warning.</summary>
     public const string Token = "token";
 
+    /// <summary>Signed in with a Microsoft work account, which is how Copilot and Foundry work.</summary>
+    public const string Microsoft = "microsoft";
+
     public static string Clean(string? value) => value?.ToLowerInvariant() switch
     {
         Cli => Cli,
         Token => Token,
+        Microsoft => Microsoft,
         _ => Key,
     };
 }

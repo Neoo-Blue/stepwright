@@ -50,7 +50,11 @@ public sealed class SettingsForm : Form
     private readonly TextBox _aiToken = new();
     private readonly TextBox _aiCliPath = new();
     private readonly Label _aiCliStatus = new();
+    private readonly TextBox _aiAppId = new();
+    private readonly TextBox _aiTenant = new();
+    private readonly Label _aiSignedIn = new();
     private readonly Label _aiModelNote = new();
+    private readonly Label _aiPictureNote = new();
     private readonly List<string> _authKinds = new();
     private readonly CheckBox _aiPictures = new();
     private readonly CheckBox _aiNotes = new();
@@ -78,6 +82,7 @@ public sealed class SettingsForm : Form
     private readonly TableLayoutPanel _confluenceOAuthGroup = Group();
 
     private readonly TableLayoutPanel _aiKeyGroup = Group();
+    private readonly TableLayoutPanel _aiMicrosoftGroup = Group();
     private readonly TableLayoutPanel _aiCliGroup = Group();
     private readonly TableLayoutPanel _aiTokenGroup = Group();
 
@@ -309,10 +314,12 @@ public sealed class SettingsForm : Form
         BuildKeyGroup();
         BuildCliGroup();
         BuildTokenGroup();
+        BuildMicrosoftGroup();
 
         table.Controls.Add(_aiKeyGroup);
         table.Controls.Add(_aiCliGroup);
         table.Controls.Add(_aiTokenGroup);
+        table.Controls.Add(_aiMicrosoftGroup);
 
         // The model is a list you can also type into, filled by asking the service.
         _aiModel.DropDownStyle = ComboBoxStyle.DropDown;
@@ -357,11 +364,13 @@ public sealed class SettingsForm : Form
 
         AddCheck(table, _aiPictures, "Let the assistant see each screenshot", _settings.AiSendScreenshots);
 
-        AddNote(
-            table,
-            "This is what makes the steps genuinely good, because the picture shows what a browser"
-            + " or an application never reports. The picture for each step is sent to the service"
-            + " chosen above, and nowhere else.");
+        _aiPictureNote.AutoSize = true;
+        _aiPictureNote.MaximumSize = new Size(580, 0);
+        _aiPictureNote.ForeColor = Theme.Muted;
+        _aiPictureNote.Font = Theme.UiSmall;
+        _aiPictureNote.Margin = new Padding(1, 2, 0, 12);
+        _aiPictureNote.BackColor = Color.Transparent;
+        table.Controls.Add(_aiPictureNote);
 
         AddCheck(table, _aiNotes, "Write a note under a step when it helps", _settings.AiWriteNotes);
 
@@ -521,6 +530,136 @@ public sealed class SettingsForm : Form
             + $" {agent.Plan} account, close it, then press Check the app.");
     }
 
+    /// <summary>
+    /// Signing in with a work account. Microsoft issues these tokens to an application, so the
+    /// application is registered once in your own tenant and its identifier goes here. Nothing
+    /// secret is kept: the sign in is the device code flow, which is why there is a code to
+    /// type rather than an address to register.
+    /// </summary>
+    private void BuildMicrosoftGroup()
+    {
+        AddNote(
+            _aiMicrosoftGroup,
+            "Register an application once in Microsoft Entra, allow it to be a public client,"
+            + " and grant it the Graph permissions the service needs. Then sign in here and"
+            + " Stepwright renews it on its own.");
+
+        _aiAppId.Text = _settings.AiAppId;
+        AddField(_aiMicrosoftGroup, "Application identifier", _aiAppId);
+
+        _aiTenant.Text = _settings.AiTenant;
+        AddField(
+            _aiMicrosoftGroup,
+            "Tenant, only when your organisation needs it named. Blank means any work account",
+            _aiTenant);
+
+        var row = new FlowLayoutPanel
+        {
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            Dock = DockStyle.Fill,
+            Margin = new Padding(0, 0, 0, 8),
+            BackColor = Color.Transparent,
+            WrapContents = false,
+        };
+
+        row.Controls.Add(Action("Sign in with Microsoft", async () => await SignInMicrosoftAsync().ConfigureAwait(true)));
+        row.Controls.Add(Action("Sign out", SignOutMicrosoft));
+        row.Controls.Add(Action("Open the portal", () => Open(MicrosoftOAuth.PortalPage)));
+
+        _aiMicrosoftGroup.Controls.Add(row);
+
+        _aiSignedIn.AutoSize = true;
+        _aiSignedIn.MaximumSize = new Size(580, 0);
+        _aiSignedIn.ForeColor = Theme.Muted;
+        _aiSignedIn.Font = Theme.UiSmall;
+        _aiSignedIn.Margin = new Padding(1, 0, 0, 10);
+        _aiSignedIn.BackColor = Color.Transparent;
+        _aiMicrosoftGroup.Controls.Add(_aiSignedIn);
+
+        ShowMicrosoftSignIn();
+    }
+
+    private void ShowMicrosoftSignIn()
+    {
+        _aiSignedIn.ForeColor = _settings.HasMicrosoftSignIn ? Theme.Good : Theme.Muted;
+        _aiSignedIn.Text = _settings.HasMicrosoftSignIn
+            ? "Signed in. Stepwright renews this on its own."
+            : "Not signed in yet.";
+    }
+
+    /// <summary>
+    /// Runs the device code flow. The code appears in a window the person can leave open while
+    /// they sign in on whichever machine has their browser, which is the point of this flow.
+    /// </summary>
+    private async Task SignInMicrosoftAsync()
+    {
+        _aiResult.ForeColor = Theme.Muted;
+        _aiResult.Text = "Asking Microsoft for a code...";
+
+        try
+        {
+            string[] scopes = SelectedProvider.Id == AiProviders.Copilot
+                ? MicrosoftOAuth.CopilotScopes
+                : MicrosoftOAuth.FoundryScopes;
+
+            using var cancel = new CancellationTokenSource(TimeSpan.FromMinutes(15));
+
+            MicrosoftSession session = await MicrosoftOAuth
+                .SignInAsync(
+                    _aiAppId.Text.Trim(),
+                    _aiTenant.Text.Trim(),
+                    scopes,
+                    (code, where) =>
+                    {
+                        _aiResult.ForeColor = Theme.Good;
+                        _aiResult.Text = $"Enter the code {code} at {where}. Waiting...";
+
+                        try
+                        {
+                            Clipboard.SetText(code);
+                        }
+                        catch
+                        {
+                            // A clipboard another application is holding is no reason to stop.
+                        }
+
+                        Open(where);
+                    },
+                    cancel.Token)
+                .ConfigureAwait(true);
+
+            // Kept straight away, because a sign in that is lost by pressing Cancel is worse
+            // than one that is kept by mistake.
+            _settings.AiAuth = AiAuthKinds.Microsoft;
+            _settings.AiProvider = SelectedProvider.Id;
+            _settings.AiAppId = _aiAppId.Text.Trim();
+            _settings.AiTenant = _aiTenant.Text.Trim();
+            _settings.RememberMicrosoft(session);
+            _settings.Save();
+
+            ShowMicrosoftSignIn();
+
+            _aiResult.ForeColor = Theme.Good;
+            _aiResult.Text = "Signed in. Test the connection to prove it works.";
+        }
+        catch (Exception error)
+        {
+            _aiResult.ForeColor = Theme.Record;
+            _aiResult.Text = StepwrightText.Shorten(error.Message, 200);
+        }
+    }
+
+    private void SignOutMicrosoft()
+    {
+        _settings.ForgetMicrosoft();
+        _settings.Save();
+        ShowMicrosoftSignIn();
+
+        _aiResult.ForeColor = Theme.Muted;
+        _aiResult.Text = "Signed out. The application details are kept for next time.";
+    }
+
     /// <summary>Offers only the routes the chosen service actually has.</summary>
     private void ReloadAuthChoices(string? wanted)
     {
@@ -529,8 +668,19 @@ public sealed class SettingsForm : Form
         _authKinds.Clear();
         _aiAuth.Items.Clear();
 
-        _authKinds.Add(AiAuthKinds.Key);
-        _aiAuth.Items.Add("A key I bought, billed by what it uses");
+        if (SelectedProvider.Id != AiProviders.Copilot)
+        {
+            _authKinds.Add(AiAuthKinds.Key);
+            _aiAuth.Items.Add(SelectedProvider.Id == AiProviders.Foundry
+                ? "A key from the resource"
+                : "A key I bought, billed by what it uses");
+        }
+
+        if (SelectedProvider.Id is AiProviders.Copilot or AiProviders.Foundry)
+        {
+            _authKinds.Add(AiAuthKinds.Microsoft);
+            _aiAuth.Items.Add("Sign in with my Microsoft work account");
+        }
 
         AiAgent? agent = AiAgents.Find(SelectedProvider.Id);
 
@@ -564,6 +714,18 @@ public sealed class SettingsForm : Form
         _aiKeyGroup.Visible = auth == AiAuthKinds.Key;
         _aiCliGroup.Visible = auth == AiAuthKinds.Cli;
         _aiTokenGroup.Visible = auth == AiAuthKinds.Token;
+        _aiMicrosoftGroup.Visible = auth == AiAuthKinds.Microsoft;
+
+        // A service that cannot be shown a picture should not offer to be shown one.
+        bool reads = SelectedProvider.SupportsPictures;
+        _aiPictures.Enabled = reads;
+        _aiPictureNote.Text = reads
+            ? "This is what makes the steps genuinely good, because the picture shows what a"
+              + " browser or an application never reports. The picture for each step is sent to"
+              + " the service chosen above, and nowhere else."
+            : SelectedProvider.Label + " takes text and nothing else, so it cannot be shown a"
+              + " screenshot. It can still tidy the wording and decide the shape of the guide,"
+              + " but it cannot name a control it has not been told about.";
 
         AiAgent? agent = AiAgents.Find(SelectedProvider.Id);
 
@@ -1245,6 +1407,11 @@ public sealed class SettingsForm : Form
             AiCliPath = _aiCliPath.Text.Trim(),
             AiKeyProtected = _settings.AiKeyProtected,
             AiTokenProtected = _settings.AiTokenProtected,
+            AiAppId = _aiAppId.Text.Trim(),
+            AiTenant = _aiTenant.Text.Trim(),
+            AiRefreshProtected = _settings.AiRefreshProtected,
+            AiAccessProtected = _settings.AiAccessProtected,
+            AiAccessExpires = _settings.AiAccessExpires,
         };
 
         if (_keyEdited && !string.IsNullOrWhiteSpace(_aiKey.Text))
@@ -1372,6 +1539,8 @@ public sealed class SettingsForm : Form
         _settings.AiBaseUrl = _aiBaseUrl.Text.Trim();
         _settings.AiModel = _aiModel.Text.Trim();
         _settings.AiCliPath = _aiCliPath.Text.Trim();
+        _settings.AiAppId = _aiAppId.Text.Trim();
+        _settings.AiTenant = _aiTenant.Text.Trim();
         _settings.AiSendScreenshots = _aiPictures.Checked;
         _settings.AiWriteNotes = _aiNotes.Checked;
 

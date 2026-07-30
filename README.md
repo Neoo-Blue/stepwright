@@ -206,6 +206,30 @@ for your Windows account with the platform data protection interface.
 Press **Find models** and Stepwright asks that service which models your key is actually allowed
 to use, then fills the list. You can still type a name yourself.
 
+### Microsoft, for a shop that already runs on it
+
+Two more services, both signed in with a work account rather than a key. The sign in shows a
+code, you type it into your browser on whichever machine has one, and Stepwright renews it on
+its own. Both need an application registered once in your own Entra tenant, marked as a public
+client, because Microsoft issues these tokens to a named application rather than to a person.
+
+| | Microsoft 365 Copilot | Azure AI Foundry |
+| --- | --- | --- |
+| Paid for by | the Copilot add on licence you already have | your Azure subscription, per token |
+| Reads screenshots | no | yes |
+| Where it runs | inside the Microsoft 365 trust boundary | your own deployment |
+| Maturity | preview, on the beta Graph endpoint | production |
+
+Copilot takes text and nothing else, so the screenshot switch is turned off for it rather than
+quietly ignored, and the settings page says why. It can still tidy the wording and decide the
+shape of a guide, which is most of the value on a browser recording. What it cannot do is name a
+control it was never told about, which is exactly what a remote session needs, so if your work is
+mostly remote sessions then Foundry or one of the other services is the better engine.
+
+Foundry is the OpenAI shape underneath, so the model box holds the name you gave the deployment
+rather than a model name, and the address is your own resource. It also accepts a key from the
+resource if you would rather not sign in.
+
 ### Using a subscription you already pay for
 
 **How it signs in** offers a second route. If you already pay for Claude Pro or Max, ChatGPT

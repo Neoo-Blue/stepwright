@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using Stepwright.Config;
 
 namespace Stepwright.Ai;
@@ -43,6 +44,30 @@ public static class AiClient
         if (string.IsNullOrWhiteSpace(baseUrl))
         {
             throw new InvalidOperationException("The assistant has no address to call. Check Settings.");
+        }
+
+        // Signed in with a work account. Copilot only ever works this way; Foundry can also
+        // take a key, in which case it falls through to the shape below.
+        if (auth == AiAuthKinds.Microsoft)
+        {
+            string bearer = await MicrosoftTokenAsync(settings, token).ConfigureAwait(false);
+
+            return provider == AiProviders.Copilot
+                ? await CopilotAsync(baseUrl, bearer, system, user, token).ConfigureAwait(false)
+                : await FoundryAsync(baseUrl, bearer, key: string.Empty, settings.AiModel, system, user, pictures, token)
+                    .ConfigureAwait(false);
+        }
+
+        if (provider == AiProviders.Copilot)
+        {
+            throw new InvalidOperationException(
+                "Microsoft 365 Copilot has no keys. Sign in with your work account in Settings.");
+        }
+
+        if (provider == AiProviders.Foundry)
+        {
+            return await FoundryAsync(baseUrl, bearer: string.Empty, key, settings.AiModel, system, user, pictures, token)
+                .ConfigureAwait(false);
         }
 
         if (subscriptionToken && provider != AiProviders.Anthropic)
@@ -242,6 +267,199 @@ public static class AiClient
         }
 
         request.Headers.Add("anthropic-version", "2023-06-01");
+    }
+
+    // ------------------------------------------------------------------ Microsoft shapes
+
+    /// <summary>
+    /// A usable access token for the signed in work account, renewing it when it has run out.
+    /// The renewal is written back to settings, so the next run of the app starts ready.
+    /// </summary>
+    private static async Task<string> MicrosoftTokenAsync(AppSettings settings, CancellationToken token)
+    {
+        if (!settings.HasMicrosoftSignIn)
+        {
+            throw new InvalidOperationException("Sign in with your Microsoft work account in Settings first.");
+        }
+
+        string access = settings.GetAiAccess();
+
+        if (!string.IsNullOrEmpty(access) && settings.AiAccessExpires > DateTimeOffset.UtcNow)
+        {
+            return access;
+        }
+
+        string[] scopes = string.Equals(settings.AiProvider, AiProviders.Copilot, StringComparison.OrdinalIgnoreCase)
+            ? MicrosoftOAuth.CopilotScopes
+            : MicrosoftOAuth.FoundryScopes;
+
+        MicrosoftSession renewed = await MicrosoftOAuth
+            .RefreshAsync(settings.AiAppId, settings.AiTenant, scopes, settings.GetAiRefresh(), token)
+            .ConfigureAwait(false);
+
+        settings.RememberMicrosoft(renewed);
+        settings.Save();
+
+        return renewed.AccessToken;
+    }
+
+    /// <summary>
+    /// Microsoft 365 Copilot. It is a conversation rather than a single question, so a fresh
+    /// one is opened for every step: an assistant that remembers the last twenty steps starts
+    /// answering about them instead of about the picture in front of it.
+    ///
+    /// It also has no separate place for the rules, so the rules and the question travel
+    /// together, and no way to take a picture at all, which is why the screenshot switch is
+    /// turned off for this service rather than quietly ignored.
+    /// </summary>
+    private static async Task<string> CopilotAsync(
+        string baseUrl,
+        string bearer,
+        string system,
+        string user,
+        CancellationToken token)
+    {
+        string root = baseUrl.EndsWith("/beta", StringComparison.OrdinalIgnoreCase)
+            ? baseUrl
+            : baseUrl + "/beta";
+
+        using var opening = new HttpRequestMessage(HttpMethod.Post, root + "/copilot/conversations");
+        opening.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearer);
+        opening.Content = Json(new JsonObject());
+
+        JsonNode opened = await SendAsync(opening, token).ConfigureAwait(false);
+        string conversation = opened["id"]?.GetValue<string>() ?? string.Empty;
+
+        if (conversation.Length == 0)
+        {
+            throw new InvalidOperationException("Copilot did not say which conversation it opened.");
+        }
+
+        var body = new JsonObject
+        {
+            ["message"] = new JsonObject { ["text"] = system + "\n\n" + user },
+            ["locationHint"] = new JsonObject { ["timeZone"] = TimeZoneInfo.Local.Id },
+
+            // The work in front of the person is the whole context. Searching their mail and
+            // their sites for a step in a guide would be slow and beside the point.
+            ["contextualResources"] = new JsonObject
+            {
+                ["webContext"] = new JsonObject { ["isWebEnabled"] = false },
+            },
+        };
+
+        using var asking = new HttpRequestMessage(
+            HttpMethod.Post,
+            $"{root}/copilot/conversations/{conversation}/chat");
+
+        asking.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearer);
+        asking.Content = Json(body);
+
+        JsonNode reply = await SendAsync(asking, token).ConfigureAwait(false);
+
+        if (reply["messages"] is not JsonArray messages || messages.Count == 0)
+        {
+            return string.Empty;
+        }
+
+        // The first message is the question read back. The answer is the last one.
+        string text = messages[^1]?["text"]?.GetValue<string>() ?? string.Empty;
+
+        return Plain(text);
+    }
+
+    /// <summary>
+    /// Copilot writes for a person: entity tags around names and files, and footnote markers
+    /// pointing at where it looked. None of that survives a trip through a parser, so it is
+    /// taken out before anything else reads the answer.
+    /// </summary>
+    private static string Plain(string text)
+    {
+        string result = Regex.Replace(
+            text,
+            "</?(Person|File|Event|Email|Message|Site|Citation)[^>]*>",
+            string.Empty,
+            RegexOptions.IgnoreCase);
+
+        return Regex.Replace(result, @"\[\^\d+\^\]", string.Empty).Trim();
+    }
+
+    /// <summary>
+    /// Azure AI Foundry speaks the OpenAI shape, with the deployment name in the address rather
+    /// than the body, and either a signed in work account or a key of its own.
+    /// </summary>
+    private static async Task<string> FoundryAsync(
+        string baseUrl,
+        string bearer,
+        string key,
+        string model,
+        string system,
+        string user,
+        IReadOnlyList<byte[]>? pictures,
+        CancellationToken token)
+    {
+        string deployment = (model ?? string.Empty).Trim();
+
+        if (deployment.Length == 0)
+        {
+            throw new InvalidOperationException(
+                "Foundry needs the name of your deployment. Put it in the model box.");
+        }
+
+        var content = new JsonArray
+        {
+            new JsonObject { ["type"] = "text", ["text"] = user },
+        };
+
+        foreach (byte[] picture in pictures ?? Array.Empty<byte[]>())
+        {
+            content.Add(new JsonObject
+            {
+                ["type"] = "image_url",
+                ["image_url"] = new JsonObject
+                {
+                    ["url"] = "data:image/jpeg;base64," + Convert.ToBase64String(picture),
+                },
+            });
+        }
+
+        JsonNode reply = await SendAsync(
+            deployment,
+            steady =>
+            {
+                var body = new JsonObject
+                {
+                    ["messages"] = new JsonArray
+                    {
+                        new JsonObject { ["role"] = "system", ["content"] = system },
+                        new JsonObject { ["role"] = "user", ["content"] = content },
+                    },
+                };
+
+                if (steady)
+                {
+                    body["temperature"] = 0.2;
+                }
+
+                var request = new HttpRequestMessage(
+                    HttpMethod.Post,
+                    $"{baseUrl}/openai/deployments/{deployment}/chat/completions?api-version=2024-10-21");
+
+                if (bearer.Length > 0)
+                {
+                    request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearer);
+                }
+                else if (key.Length > 0)
+                {
+                    request.Headers.Add("api-key", key);
+                }
+
+                request.Content = Json(body);
+                return request;
+            },
+            token).ConfigureAwait(false);
+
+        return reply["choices"]?[0]?["message"]?["content"]?.GetValue<string>() ?? string.Empty;
     }
 
     // ------------------------------------------------------------------ Gemini shape

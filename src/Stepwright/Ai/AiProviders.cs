@@ -24,6 +24,8 @@ public static class AiProviders
     public const string OpenAi = "openai";
     public const string Anthropic = "anthropic";
     public const string Gemini = "gemini";
+    public const string Copilot = "copilot";
+    public const string Foundry = "foundry";
     public const string Custom = "custom";
 
     public static readonly IReadOnlyList<AiProvider> All = new[]
@@ -54,6 +56,25 @@ public static class AiProviders
             Model = "gemini-2.0-flash",
             KeyPage = "https://aistudio.google.com/apikey",
             Hint = "Key from AI Studio. Every Gemini model can read pictures.",
+        },
+        new AiProvider
+        {
+            Id = Copilot,
+            Label = "Microsoft 365 Copilot",
+            BaseUrl = "https://graph.microsoft.com/beta",
+            Model = string.Empty,
+            KeyPage = MicrosoftOAuth.PortalPage,
+            Hint = "Signs in as you and uses the Copilot licence you already pay for. Text only.",
+            SupportsPictures = false,
+        },
+        new AiProvider
+        {
+            Id = Foundry,
+            Label = "Azure AI Foundry",
+            BaseUrl = "https://your-resource.openai.azure.com",
+            Model = "gpt-4o",
+            KeyPage = "https://ai.azure.com",
+            Hint = "Your own deployment. The model box is the name you gave the deployment.",
         },
         new AiProvider
         {
