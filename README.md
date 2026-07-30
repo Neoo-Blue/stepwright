@@ -233,6 +233,17 @@ the ones to use.
 
 It rewrites the wording of every step and adds a short note where one genuinely helps.
 
+Then it does the harder thing: it decides how many steps there should have been. A recorder
+writes one step per action, which is finer than any reader wants. Opening a tab, typing an
+address and pressing Enter are three recorded actions and one instruction. The assistant folds
+runs like that into a single step, splits a step that holds two actions, and sets aside the
+ones that carry nothing: a stray click, a repeat, a value typed and then typed again
+differently, a page opened and then left. Eight recorded steps commonly come out as two.
+
+Nothing is deleted. A step that is folded away or set aside stays in the editor marked hidden,
+so the Hide button brings it back, and the whole pass can be undone with one answer when it is
+finished.
+
 There is a second switch: **let the assistant see each screenshot**. It is off by default, and
 it is the one that changes the quality dramatically. The recorder can only name a control as
 well as the application describes itself, which inside a browser is often not at all, which is

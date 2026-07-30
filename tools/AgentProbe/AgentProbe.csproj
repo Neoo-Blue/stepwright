@@ -20,10 +20,14 @@
 
   <ItemGroup>
     <Compile Include="Program.cs" />
+    <Compile Include="Shape.cs" />
     <Compile Include="GlobalUsings.cs" />
     <Compile Include="../../src/Stepwright/Publish/AtlassianOAuth.cs" />
     <Compile Include="../../src/Stepwright/Ai/AiAgents.cs" />
     <Compile Include="../../src/Stepwright/Ai/AiProviders.cs" />
+    <Compile Include="../../src/Stepwright/Ai/AiClient.cs" />
+    <Compile Include="../../src/Stepwright/Ai/AiShaper.cs" />
+    <Compile Include="../../src/Stepwright/Model/Guide.cs" />
     <Compile Include="../../src/Stepwright/Config/AppSettings.cs" />
   </ItemGroup>
 

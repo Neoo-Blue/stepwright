@@ -22,6 +22,13 @@ internal static class Program
         string provider = args.Length > 0 ? args[0] : AiProviders.Anthropic;
         string picture = args.Length > 1 ? args[1] : string.Empty;
 
+        // The second word chooses what to prove: the plain round trip, or the shaping pass.
+        if (string.Equals(picture, "shape", StringComparison.OrdinalIgnoreCase))
+        {
+            using var shaping = new CancellationTokenSource(TimeSpan.FromMinutes(10));
+            return await Shape.RunAsync(provider, shaping.Token).ConfigureAwait(false);
+        }
+
         AiAgent? agent = AiAgents.Find(provider);
 
         if (agent is null)

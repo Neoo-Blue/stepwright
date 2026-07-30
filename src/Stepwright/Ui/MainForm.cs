@@ -2302,6 +2302,12 @@ public sealed class MainForm : Form
                 }).ConfigureAwait(true);
             }
 
+            // Everything the assistant is about to change is written down first, so the whole
+            // pass can be put back with one answer if the person does not like it.
+            List<(Step Step, string Text, string Notes, bool Skip)> before = _guide.Steps
+                .Select(s => (s, s.Text, s.Notes, s.Skip))
+                .ToList();
+
             int changed = await AiPolisher
                 .ImproveAsync(
                     _guide,
@@ -2309,6 +2315,12 @@ public sealed class MainForm : Form
                     step => pictures.TryGetValue(step.Id, out byte[]? picture) ? picture : null,
                     progress,
                     cancel.Token)
+                .ConfigureAwait(true);
+
+            // The words are right by now. This second pass decides how many steps there should
+            // have been in the first place.
+            ShapeResult shape = await AiShaper
+                .ShapeAsync(_guide, _settings, progress, cancel.Token)
                 .ConfigureAwait(true);
 
             if (string.IsNullOrWhiteSpace(_guide.Title) || _guide.Title == "Untitled guide")
@@ -2325,12 +2337,50 @@ public sealed class MainForm : Form
                 }
             }
 
-            _list.Invalidate();
+            RebuildList();
             LoadSelectedStep();
             MarkDirty();
-            Status(changed == 0
-                ? "The assistant left every step as it was."
-                : $"The assistant rewrote {changed} steps.");
+
+            string done = changed == 0
+                ? "The assistant left the wording as it was"
+                : $"The assistant rewrote {changed} steps";
+
+            if (shape.Changed)
+            {
+                done += " and " + shape.Describe();
+            }
+
+            Status(done + ".");
+
+            if (shape.Changed && MessageBox.Show(
+                    this,
+                    done + "."
+                    + Environment.NewLine
+                    + Environment.NewLine
+                    + "Steps that were folded away or set aside are still here, marked hidden, so"
+                    + " you can bring any of them back with the Hide button. Keep this?",
+                    "Stepwright",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Question) == DialogResult.No)
+            {
+                foreach ((Step step, string text, string notes, bool skip) in before)
+                {
+                    step.Text = text;
+                    step.Notes = notes;
+                    step.Skip = skip;
+                }
+
+                // Anything the shaping pass added is not in the list that was written down.
+                _guide.Steps.Clear();
+                foreach ((Step step, string _, string _, bool _) in before)
+                {
+                    _guide.Steps.Add(step);
+                }
+
+                RebuildList();
+                LoadSelectedStep();
+                Status("Put back the way it was.");
+            }
         }
         catch (Exception error)
         {

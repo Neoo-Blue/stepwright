@@ -1189,12 +1189,25 @@ final class MainWindow: NSWindowController, NSTableViewDataSource, NSTableViewDe
             }
         }
 
+        // Everything the assistant is about to change is written down first, so the whole pass
+        // can be put back with one answer if the person does not like it.
+        let before = guide.Steps.map { (step: $0, text: $0.Text, notes: $0.Notes, skip: $0.Skip) }
+
         Task { @MainActor in
             do {
                 let changed = try await Assistant.improve(
                     guide: guide,
                     settings: settings,
                     pictureFor: { step in pictures[step.Id] },
+                    progress: { [weak self] message in
+                        Task { @MainActor in self?.status(message) }
+                    })
+
+                // The words are right by now. This second pass decides how many steps there
+                // should have been in the first place.
+                let shape = try await Shaper.shape(
+                    guide: guide,
+                    settings: settings,
                     progress: { [weak self] message in
                         Task { @MainActor in self?.status(message) }
                     })
@@ -1211,9 +1224,38 @@ final class MainWindow: NSWindowController, NSTableViewDataSource, NSTableViewDe
                 self.table.reloadData()
                 self.loadSelectedStep()
                 self.markDirty()
-                self.status(changed == 0
-                    ? "The assistant left every step as it was."
-                    : "The assistant rewrote \(changed) steps.")
+
+                var done = changed == 0
+                    ? "The assistant left the wording as it was"
+                    : "The assistant rewrote \(changed) steps"
+
+                if shape.changed { done += " and " + shape.describe() }
+                self.status(done + ".")
+
+                if shape.changed {
+                    let alert = NSAlert()
+                    alert.messageText = "Stepwright"
+                    alert.informativeText = done + "."
+                        + "\n\nSteps that were folded away or set aside are still here, marked"
+                        + " hidden, so you can bring any of them back with the Hide button."
+                    alert.addButton(withTitle: "Keep it")
+                    alert.addButton(withTitle: "Put it back")
+
+                    if alert.runModal() == .alertSecondButtonReturn {
+                        for entry in before {
+                            entry.step.Text = entry.text
+                            entry.step.Notes = entry.notes
+                            entry.step.Skip = entry.skip
+                        }
+
+                        // Anything the shaping pass added is not in the list written down.
+                        guide.Steps = before.map { $0.step }
+
+                        self.table.reloadData()
+                        self.loadSelectedStep()
+                        self.status("Put back the way it was.")
+                    }
+                }
             } catch {
                 self.warn("The assistant could not finish. " + error.localizedDescription)
             }
