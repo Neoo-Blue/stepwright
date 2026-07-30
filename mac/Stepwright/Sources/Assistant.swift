@@ -382,7 +382,9 @@ enum Assistant {
     private static let noteStyle = """
     A note is optional. Add one only when it genuinely helps the reader: a warning, \
     something to have ready first, or what they should expect to happen. \
-    Leave the note empty when the step speaks for itself. Never restate the step.
+    Leave the note empty when the step speaks for itself. Never restate the step. \
+    Never write a note the next step contradicts: if you are told what comes next, a note \
+    saying a field is optional is wrong when the next step fills it in.
     """
 
     static func improve(
@@ -410,6 +412,12 @@ enum Assistant {
                 var context = "Guide title: \(guide.Title)\n"
                 context += "This is step \(index + 1) of \(targets.count).\n"
                 context += describe(step)
+
+                // What happens next decides whether a note is true. Without it the assistant
+                // writes things like "this field is optional" on the step before it is filled.
+                if index + 1 < targets.count {
+                    context += "\nThe next step is: \(targets[index + 1].Text)\n"
+                }
 
                 let reply = try await AiClient.complete(
                     settings: settings,

@@ -600,10 +600,18 @@ final class Recorder {
         step.Kind = .hotkey
         step.ShowClickMarker = false
         step.ShowElementOutline = false
-        step.AutoZoom = false
+
+        // A shortcut has no click to point at, but it does have a window, and a picture of the
+        // window beats a picture of the whole desktop with the work lost in the middle.
+        step.AutoZoom = settings.autoZoom
         step.Keys = keys
         step.AppName = element.appName
         step.WindowTitle = element.windowTitle
+
+        if !element.windowBounds.isEmpty {
+            step.WindowArea = RectI(frame.toImageRect(element.windowBounds))
+        }
+
         step.Text = StepText.describe(kind: .hotkey, element: element, place: place, extra: keys)
         step.OriginalText = step.Text
         step.Image = saveFrame(frame)
@@ -619,9 +627,14 @@ final class Recorder {
         step.Kind = .scroll
         step.ShowClickMarker = false
         step.ShowElementOutline = false
-        step.AutoZoom = false
+        step.AutoZoom = settings.autoZoom
         step.AppName = element.appName
         step.WindowTitle = element.windowTitle
+
+        if !element.windowBounds.isEmpty {
+            step.WindowArea = RectI(frame.toImageRect(element.windowBounds))
+        }
+
         step.Text = StepText.describe(kind: .scroll, element: element, place: place, extra: direction)
         step.OriginalText = step.Text
         step.Image = saveFrame(frame)

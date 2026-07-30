@@ -38,7 +38,11 @@ enum Shaper {
     Fold a run of steps into one when a reader would do them as a single action. \
     Opening a tab, typing an address and pressing Enter is one step: go to that address. \
     Clicking a menu and then the item inside it is one step. Typing into a field and \
-    pressing Enter is one step.
+    pressing Enter is one step. Filling in the fields of one form is one step, whether they \
+    were typed or chosen from a list: give every field and every value in the order they were \
+    filled, and fold the button that submits the form in with them.
+    A step whose only content is a key that moved between fields, such as Tab, belongs with \
+    the typing on either side of it rather than standing on its own.
     Split a step into two when it holds two actions the reader has to do separately.
     Leave a step out when it carries nothing a reader has to do. That includes a stray \
     click, a repeat of the step before it, and opening something the next step opens \
@@ -54,6 +58,10 @@ enum Shaper {
     still tells the reader everything they have to do.
     Write one short sentence per step, in the imperative, starting with a verb, naming \
     the exact button, link, menu or field in quotes. \
+    A note is optional and is for the reader: a warning, something to have ready first, or \
+    what they should expect to happen. Leave it empty when the step speaks for itself. Never \
+    restate the step, and never write a note about the guide or about how it was recorded, \
+    such as saying that a value was hidden. \
     Never use a hyphen, an en dash or an em dash anywhere in your answer.
     Reply with JSON only, in this form:
     {"steps":[{"from":[1,2,3],"picture":3,"text":"...","note":"..."}],"leaveOut":[7]}

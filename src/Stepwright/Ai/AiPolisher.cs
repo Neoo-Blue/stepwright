@@ -26,7 +26,9 @@ public static class AiPolisher
     private const string NoteStyle =
         "A note is optional. Add one only when it genuinely helps the reader: a warning, "
         + "something to have ready first, or what they should expect to happen. "
-        + "Leave the note empty when the step speaks for itself. Never restate the step.";
+        + "Leave the note empty when the step speaks for itself. Never restate the step. "
+        + "Never write a note the next step contradicts: if you are told what comes next, a "
+        + "note saying a field is optional is wrong when the next step fills it in.";
 
     /// <summary>
     /// Rewrites every step. Returns how many were changed.
@@ -84,6 +86,14 @@ public static class AiPolisher
             context.AppendLine("Guide title: " + guide.Title);
             context.AppendLine("This is step " + (i + 1) + " of " + targets.Count + ".");
             AppendContext(context, step);
+
+            // What happens next decides whether a note is true. Without it the assistant writes
+            // things like "this field is optional" on the step before the one that fills it in.
+            if (i + 1 < targets.Count)
+            {
+                context.AppendLine();
+                context.AppendLine("The next step is: " + targets[i + 1].Text);
+            }
 
             string reply;
             try

@@ -79,6 +79,18 @@ enum Renderer {
 
         if !step.AutoZoom { return full }
 
+        // The window the work happened in. A step with nothing to zoom towards is still far
+        // better shown as its window than as the whole desktop with the work lost in the middle.
+        var stage = full
+
+        if let shell = step.WindowArea, !shell.isEmpty {
+            let inside = shell.rect.intersection(full)
+
+            if inside.width > imageSize.width * 0.2 && inside.height > imageSize.height * 0.2 {
+                stage = inside
+            }
+        }
+
         var anchor = CGRect.zero
 
         if let area = step.ElementArea,
@@ -90,7 +102,7 @@ enum Renderer {
             anchor = CGRect(x: click.point.x - 50, y: click.point.y - 50, width: 100, height: 100)
         }
 
-        if anchor.isEmpty { return full }
+        if anchor.isEmpty { return stage }
 
         let padX = CGFloat(max(80, padding))
         let padY = padX * 0.62
@@ -101,7 +113,7 @@ enum Renderer {
         var height = max(box.height, box.width / aspect)
         var width = height * aspect
 
-        if width >= imageSize.width * 0.86 || height >= imageSize.height * 0.86 { return full }
+        if width >= imageSize.width * 0.86 || height >= imageSize.height * 0.86 { return stage }
 
         width = min(width, imageSize.width)
         height = min(height, imageSize.height)
@@ -117,7 +129,27 @@ enum Renderer {
         if result.maxX > imageSize.width { result.origin.x = imageSize.width - result.width }
         if result.maxY > imageSize.height { result.origin.y = imageSize.height - result.height }
 
-        return result.intersection(full)
+        // A crop that stops just short of the window edge slices through whatever sits there,
+        // which is how a picture ends up cut off in the middle of a word. Reaching the rest of
+        // the way costs a little size and saves the sentence.
+        return snapToEdges(result.intersection(full), stage: stage)
+    }
+
+    /// Pulls a crop out to the edges of the window it sits in when it already lands close to
+    /// them. A gap of a few dozen pixels holds nothing worth showing and usually holds half a
+    /// sentence, so closing it reads better than the tighter picture does.
+    private static func snapToEdges(_ box: CGRect, stage: CGRect) -> CGRect {
+        let reachX = max(24, stage.width * 0.12)
+        let reachY = max(24, stage.height * 0.12)
+
+        let left = box.minX - stage.minX <= reachX ? stage.minX : box.minX
+        let top = box.minY - stage.minY <= reachY ? stage.minY : box.minY
+        let right = stage.maxX - box.maxX <= reachX ? stage.maxX : box.maxX
+        let bottom = stage.maxY - box.maxY <= reachY ? stage.maxY : box.maxY
+
+        let snapped = CGRect(x: left, y: top, width: right - left, height: bottom - top)
+
+        return snapped.width > 0 && snapped.height > 0 ? snapped : box
     }
 
     static func variantCrop(
@@ -199,15 +231,19 @@ enum Renderer {
     private static func drawMarker(_ context: CGContext, at point: CGPoint, color: NSColor) {
         context.saveGState()
 
-        context.setFillColor(color.withAlphaComponent(0.18).cgColor)
-        context.fillEllipse(in: CGRect(x: point.x - 34, y: point.y - 34, width: 68, height: 68))
+        // The middle is left clear on purpose: a solid dot in the centre of a link covers the
+        // word the reader is being told to press. The white edge keeps the ring readable on a
+        // dark screen.
+        context.setFillColor(color.withAlphaComponent(0.15).cgColor)
+        context.fillEllipse(in: CGRect(x: point.x - 32, y: point.y - 32, width: 64, height: 64))
 
-        context.setStrokeColor(color.withAlphaComponent(0.96).cgColor)
-        context.setLineWidth(4)
-        context.strokeEllipse(in: CGRect(x: point.x - 20, y: point.y - 20, width: 40, height: 40))
+        context.setStrokeColor(NSColor.white.withAlphaComponent(0.47).cgColor)
+        context.setLineWidth(5.5)
+        context.strokeEllipse(in: CGRect(x: point.x - 19, y: point.y - 19, width: 38, height: 38))
 
-        context.setFillColor(color.withAlphaComponent(0.96).cgColor)
-        context.fillEllipse(in: CGRect(x: point.x - 5, y: point.y - 5, width: 10, height: 10))
+        context.setStrokeColor(color.withAlphaComponent(0.94).cgColor)
+        context.setLineWidth(3.5)
+        context.strokeEllipse(in: CGRect(x: point.x - 19, y: point.y - 19, width: 38, height: 38))
 
         context.restoreGState()
     }

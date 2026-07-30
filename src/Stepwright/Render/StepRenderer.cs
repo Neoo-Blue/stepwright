@@ -85,6 +85,21 @@ public static class StepRenderer
             return full;
         }
 
+        // The window the work happened in. A step with nothing to zoom towards is still far
+        // better shown as its window than as the whole desktop with a taskbar along the bottom
+        // and the actual work lost in the middle.
+        Rectangle stage = full;
+
+        if (step.WindowArea is { } shell && !shell.IsEmpty)
+        {
+            Rectangle inside = Rectangle.Intersect(shell.Rect, full);
+
+            if (inside.Width > imageSize.Width * 0.2 && inside.Height > imageSize.Height * 0.2)
+            {
+                stage = inside;
+            }
+        }
+
         Rectangle anchor = Rectangle.Empty;
         if (step.ElementArea is { } area && IsUsefulElement(area.Rect, imageSize, step.ClickPoint, 0.72))
         {
@@ -98,7 +113,7 @@ public static class StepRenderer
 
         if (anchor.IsEmpty)
         {
-            return full;
+            return stage;
         }
 
         int padX = Math.Max(80, padding);
@@ -116,8 +131,13 @@ public static class StepRenderer
 
         if (result.Width >= imageSize.Width * 0.86 || result.Height >= imageSize.Height * 0.86)
         {
-            return full;
+            return stage;
         }
+
+        // A crop that stops just short of the window edge slices through whatever sits there,
+        // which is how a picture ends up cut off in the middle of a word. Reaching the rest of
+        // the way costs a little size and saves the sentence.
+        result = SnapToEdges(result, stage);
 
         if (result.X < 0)
         {
@@ -197,6 +217,26 @@ public static class StepRenderer
         }
 
         return output;
+    }
+
+    /// <summary>
+    /// Pulls a crop out to the edges of the window it sits in when it already lands close to
+    /// them. A gap of a few dozen pixels holds nothing worth showing and usually holds half a
+    /// sentence, so closing it reads better than the tighter picture does.
+    /// </summary>
+    private static Rectangle SnapToEdges(Rectangle box, Rectangle stage)
+    {
+        int reachX = Math.Max(24, (int)(stage.Width * 0.12));
+        int reachY = Math.Max(24, (int)(stage.Height * 0.12));
+
+        int left = box.Left - stage.Left <= reachX ? stage.Left : box.Left;
+        int top = box.Top - stage.Top <= reachY ? stage.Top : box.Top;
+        int right = stage.Right - box.Right <= reachX ? stage.Right : box.Right;
+        int bottom = stage.Bottom - box.Bottom <= reachY ? stage.Bottom : box.Bottom;
+
+        var snapped = Rectangle.FromLTRB(left, top, right, bottom);
+
+        return snapped.Width > 0 && snapped.Height > 0 ? snapped : box;
     }
 
     /// <summary>
@@ -300,23 +340,28 @@ public static class StepRenderer
         graphics.DrawPath(pen, path);
     }
 
+    /// <summary>
+    /// Marks where the click landed without hiding what was clicked. A solid dot in the middle
+    /// of a link covers the word the reader is being told to press, so the middle is left clear
+    /// and the ring does the work, with a white edge so it reads on a dark screen as well.
+    /// </summary>
     private static void DrawClickMarker(Graphics graphics, Point center, Color color)
     {
-        int outer = 34;
-        using (var halo = new SolidBrush(Color.FromArgb(46, color)))
+        int outer = 32;
+        using (var halo = new SolidBrush(Color.FromArgb(38, color)))
         {
             graphics.FillEllipse(halo, center.X - outer, center.Y - outer, outer * 2, outer * 2);
         }
 
-        int ring = 20;
-        using (var pen = new Pen(Color.FromArgb(245, color), 4f))
+        int ring = 19;
+        using (var edge = new Pen(Color.FromArgb(120, Color.White), 5.5f))
         {
-            graphics.DrawEllipse(pen, center.X - ring, center.Y - ring, ring * 2, ring * 2);
+            graphics.DrawEllipse(edge, center.X - ring, center.Y - ring, ring * 2, ring * 2);
         }
 
-        using (var dot = new SolidBrush(Color.FromArgb(245, color)))
+        using (var pen = new Pen(Color.FromArgb(240, color), 3.5f))
         {
-            graphics.FillEllipse(dot, center.X - 5, center.Y - 5, 10, 10);
+            graphics.DrawEllipse(pen, center.X - ring, center.Y - ring, ring * 2, ring * 2);
         }
     }
 

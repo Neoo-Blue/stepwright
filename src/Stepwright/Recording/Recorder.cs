@@ -826,11 +826,19 @@ public sealed class Recorder : IDisposable
             Moment = DateTime.Now,
             ShowClickMarker = false,
             ShowElementOutline = false,
-            AutoZoom = false,
+
+            // A shortcut has no click to point at, but it does have a window, and a picture of
+            // the window beats a picture of the whole desktop with the work lost in the middle.
+            AutoZoom = _settings.AutoZoom,
             Keys = work.Keys,
             AppName = element.AppName,
             WindowTitle = element.WindowTitle,
         };
+
+        if (!element.WindowBounds.IsEmpty)
+        {
+            step.WindowArea = RectI.From(work.Frame.ToImageRect(element.WindowBounds));
+        }
 
         step.Text = StepTextBuilder.Describe(StepKind.Hotkey, element, place, work.Keys);
         step.OriginalText = step.Text;
@@ -850,10 +858,15 @@ public sealed class Recorder : IDisposable
             Moment = DateTime.Now,
             ShowClickMarker = false,
             ShowElementOutline = false,
-            AutoZoom = false,
+            AutoZoom = _settings.AutoZoom,
             AppName = element.AppName,
             WindowTitle = element.WindowTitle,
         };
+
+        if (!element.WindowBounds.IsEmpty)
+        {
+            step.WindowArea = RectI.From(work.Frame.ToImageRect(element.WindowBounds));
+        }
 
         step.Text = StepTextBuilder.Describe(StepKind.Scroll, element, place, work.Direction);
         step.OriginalText = step.Text;
