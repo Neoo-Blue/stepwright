@@ -161,6 +161,73 @@ final class Settings {
         set { store.set(newValue, forKey: "confluenceFormat") }
     }
 
+    /// Either an email address with an API token, or a sign in through the browser.
+    var confluenceAuth: String {
+        get { string("confluenceAuth", "token") }
+        set { store.set(newValue, forKey: "confluenceAuth") }
+    }
+
+    /// The application you registered with Atlassian. The secret lives in the keychain.
+    var confluenceClientId: String {
+        get { string("confluenceClientId", "") }
+        set { store.set(newValue, forKey: "confluenceClientId") }
+    }
+
+    var confluenceCloudId: String {
+        get { string("confluenceCloudId", "") }
+        set { store.set(newValue, forKey: "confluenceCloudId") }
+    }
+
+    var confluenceSiteName: String {
+        get { string("confluenceSiteName", "") }
+        set { store.set(newValue, forKey: "confluenceSiteName") }
+    }
+
+    var confluenceAccessExpires: Date {
+        get { Date(timeIntervalSince1970: double("confluenceAccessExpires", 0)) }
+        set { store.set(newValue.timeIntervalSince1970, forKey: "confluenceAccessExpires") }
+    }
+
+    var confluenceSecret: String {
+        get { secret("confluence-secret") }
+        set { setSecret("confluence-secret", newValue) }
+    }
+
+    var confluenceRefresh: String {
+        get { secret("confluence-refresh") }
+        set { setSecret("confluence-refresh", newValue) }
+    }
+
+    var confluenceAccess: String {
+        get { secret("confluence-access") }
+        set { setSecret("confluence-access", newValue) }
+    }
+
+    var confluenceUsesOAuth: Bool { confluenceAuth.lowercased() == "oauth" }
+
+    var hasConfluenceSignIn: Bool { !confluenceRefresh.isEmpty && !confluenceCloudId.isEmpty }
+
+    /// Keeps what a finished sign in handed back, so it survives a restart.
+    func rememberConfluence(_ session: AtlassianSession) {
+        confluenceAccess = session.accessToken
+        confluenceRefresh = session.refreshToken
+        confluenceAccessExpires = session.expires
+        confluenceCloudId = session.cloudId
+        confluenceSiteName = session.siteName
+
+        if !session.siteUrl.isEmpty {
+            confluenceSite = session.siteUrl
+        }
+    }
+
+    func forgetConfluence() {
+        confluenceAccess = ""
+        confluenceRefresh = ""
+        confluenceAccessExpires = Date(timeIntervalSince1970: 0)
+        confluenceCloudId = ""
+        confluenceSiteName = ""
+    }
+
     var huduKey: String {
         get { secret("hudu") }
         set { setSecret("hudu", newValue) }
@@ -174,7 +241,9 @@ final class Settings {
     var hasHudu: Bool { !huduSite.isEmpty && !huduKey.isEmpty }
 
     var hasConfluence: Bool {
-        !confluenceSite.isEmpty && !confluenceEmail.isEmpty && !confluenceToken.isEmpty
+        confluenceUsesOAuth
+            ? hasConfluenceSignIn
+            : !confluenceSite.isEmpty && !confluenceEmail.isEmpty && !confluenceToken.isEmpty
     }
 
     var libraryFolder: URL {

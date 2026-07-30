@@ -182,6 +182,9 @@ struct ConfluenceClient {
     private let base: String
     private let auth: String
 
+    /// Where a person opens the page, which is not always where the requests go.
+    private let browse: String
+
     init(site: String, email: String, token: String) throws {
         var address = site.trimmingCharacters(in: .whitespaces)
         while address.hasSuffix("/") { address.removeLast() }
@@ -194,14 +197,71 @@ struct ConfluenceClient {
 
         // The address is usually given as the site, while the api sits under wiki.
         self.base = address.lowercased().hasSuffix("/wiki") ? address : address + "/wiki"
+        self.browse = self.base
 
         let pair = "\(email.trimmingCharacters(in: .whitespaces)):\(token.trimmingCharacters(in: .whitespaces))"
         self.auth = "Basic " + Data(pair.utf8).base64EncodedString()
     }
 
+    /// The same site reached through a browser sign in. Atlassian routes those requests through
+    /// its own gateway, where the site is named by its identifier rather than by its address,
+    /// so only the front of the address differs and every path below stays the same.
+    init(session: AtlassianSession) throws {
+        guard !session.cloudId.isEmpty else {
+            throw Failure.message("This sign in does not say which Confluence site it covers.")
+        }
+
+        self.base = "https://api.atlassian.com/ex/confluence/\(session.cloudId)/wiki"
+        self.auth = "Bearer " + session.accessToken
+
+        var site = session.siteUrl.trimmingCharacters(in: .whitespaces)
+        while site.hasSuffix("/") { site.removeLast() }
+
+        if site.isEmpty {
+            self.browse = self.base
+        } else {
+            self.browse = site.lowercased().hasSuffix("/wiki") ? site : site + "/wiki"
+        }
+    }
+
+    /// Builds a client for whichever route the settings say, renewing a sign in that has run
+    /// out. The settings are written again when that happens, so the next run starts ready.
+    static func make(settings: Settings) async throws -> ConfluenceClient {
+        guard settings.confluenceUsesOAuth else {
+            return try ConfluenceClient(
+                site: settings.confluenceSite,
+                email: settings.confluenceEmail,
+                token: settings.confluenceToken)
+        }
+
+        guard settings.hasConfluenceSignIn else {
+            throw Failure.message("Sign in to Atlassian in Settings first.")
+        }
+
+        let access = settings.confluenceAccess
+
+        if access.isEmpty || settings.confluenceAccessExpires <= Date() {
+            let renewed = try await Atlassian.refresh(
+                clientId: settings.confluenceClientId,
+                clientSecret: settings.confluenceSecret,
+                refreshToken: settings.confluenceRefresh)
+
+            settings.rememberConfluence(renewed)
+            return try ConfluenceClient(session: renewed)
+        }
+
+        return try ConfluenceClient(session: AtlassianSession(
+            accessToken: access,
+            refreshToken: "",
+            expires: settings.confluenceAccessExpires,
+            cloudId: settings.confluenceCloudId,
+            siteUrl: settings.confluenceSite,
+            siteName: settings.confluenceSiteName))
+    }
+
     func check() async throws -> String {
         _ = try await send("GET", "/api/v2/spaces?limit=1", nil)
-        return "Connected to " + base + "."
+        return "Connected to " + browse + "."
     }
 
     func spaces() async throws -> [PublishTarget] {
@@ -301,10 +361,10 @@ struct ConfluenceClient {
         }
 
         if let links = reply?["_links"] as? [String: Any], let web = links["webui"] as? String {
-            return base + web
+            return browse + web
         }
 
-        return "\(base)/pages/\(pageId)"
+        return "\(browse)/pages/\(pageId)"
     }
 
     /// Attachments still go through the older interface, which is the only one that takes a

@@ -47,13 +47,22 @@ final class SettingsWindow: NSWindowController {
     private let huduSite = NSTextField()
     private let huduKey = NSSecureTextField()
     private let huduResult = NSTextField(wrappingLabelWithString: "")
+    private let confluenceAuth = NSPopUpButton()
     private let confluenceSite = NSTextField()
     private let confluenceEmail = NSTextField()
     private let confluenceToken = NSSecureTextField()
+    private let confluenceClientId = NSTextField()
+    private let confluenceSecret = NSSecureTextField()
+    private let confluenceSignedIn = NSTextField(wrappingLabelWithString: "")
     private let confluenceResult = NSTextField(wrappingLabelWithString: "")
+
+    /// The fields that belong to one route, hidden as a group when the other is chosen.
+    private var confluenceTokenViews: [NSView] = []
+    private var confluenceOAuthViews: [NSView] = []
 
     private var huduKeyEdited = false
     private var confluenceTokenEdited = false
+    private var confluenceSecretEdited = false
 
     init(settings: Settings) {
         self.settings = settings
@@ -153,6 +162,38 @@ final class SettingsWindow: NSWindowController {
         confluenceSite.stringValue = settings.confluenceSite
         confluenceEmail.stringValue = settings.confluenceEmail
         confluenceToken.stringValue = settings.confluenceToken.isEmpty ? "" : String(repeating: "*", count: 24)
+        confluenceClientId.stringValue = settings.confluenceClientId
+        confluenceSecret.stringValue = settings.confluenceSecret.isEmpty ? "" : String(repeating: "*", count: 24)
+
+        confluenceAuth.addItems(withTitles: [
+            "An email address and an API token",
+            "Sign in through the browser, with your own Atlassian application",
+        ])
+
+        confluenceAuth.selectItem(at: settings.confluenceUsesOAuth ? 1 : 0)
+        confluenceAuth.target = self
+        confluenceAuth.action = #selector(confluenceAuthChanged)
+
+        confluenceTokenViews = [
+            caption("The email address you sign in with"), confluenceEmail,
+            caption("API token, from your Atlassian account security page"), confluenceToken,
+        ]
+
+        confluenceSignedIn.font = .systemFont(ofSize: 10.5)
+
+        confluenceOAuthViews = [
+            note("Register an application once in the Atlassian developer console, give it the"
+                 + " Confluence permissions, and add " + Atlassian.callbackUrl
+                 + " as its callback address. Then sign in here and nothing has to be pasted again."),
+            caption("Application identifier"), confluenceClientId,
+            caption("Application secret, kept in your keychain"), confluenceSecret,
+            row([
+                NSButton(title: "Sign in to Atlassian", target: self, action: #selector(signInConfluenceTapped)),
+                NSButton(title: "Sign out", target: self, action: #selector(signOutConfluenceTapped)),
+                NSButton(title: "Open the console", target: self, action: #selector(consoleTapped)),
+            ]),
+            confluenceSignedIn,
+        ]
 
         for result in [huduResult, confluenceResult] {
             result.font = .systemFont(ofSize: 11)
@@ -169,9 +210,9 @@ final class SettingsWindow: NSWindowController {
             NSButton(title: "Test the connection", target: self, action: #selector(testHuduTapped)),
             huduResult,
             heading("Confluence"),
+            caption("How Stepwright signs in"), confluenceAuth,
             caption("Address of your site"), confluenceSite,
-            caption("The email address you sign in with"), confluenceEmail,
-            caption("API token, from your Atlassian account security page"), confluenceToken,
+        ] + confluenceTokenViews + confluenceOAuthViews + [
             NSButton(title: "Test the connection", target: self, action: #selector(testConfluenceTapped)),
             confluenceResult,
         ]))
@@ -307,6 +348,8 @@ final class SettingsWindow: NSWindowController {
         }
 
         reloadAuthChoices(settings.aiAuth)
+        showAuthRoute()
+        showConfluenceRoute()
         showHint()
     }
 
@@ -597,10 +640,14 @@ final class SettingsWindow: NSWindowController {
         let site = confluenceSite.stringValue
         let email = confluenceEmail.stringValue
         let token = confluenceTokenEdited ? confluenceToken.stringValue : settings.confluenceToken
+        let oauth = confluenceAuth.indexOfSelectedItem == 1
 
         Task { @MainActor in
             do {
-                let client = try ConfluenceClient(site: site, email: email, token: token)
+                let client = oauth
+                    ? try await ConfluenceClient.make(settings: self.settings)
+                    : try ConfluenceClient(site: site, email: email, token: token)
+
                 self.confluenceResult.stringValue = try await client.check()
                 self.confluenceResult.textColor = NSColor.systemGreen
             } catch {
@@ -608,6 +655,76 @@ final class SettingsWindow: NSWindowController {
                 self.confluenceResult.textColor = NSColor.systemRed
             }
         }
+    }
+
+    private func showConfluenceRoute() {
+        let oauth = confluenceAuth.indexOfSelectedItem == 1
+
+        for view in confluenceTokenViews { view.isHidden = oauth }
+        for view in confluenceOAuthViews { view.isHidden = !oauth }
+
+        showConfluenceSignIn()
+    }
+
+    private func showConfluenceSignIn() {
+        confluenceSignedIn.textColor = settings.hasConfluenceSignIn ? NSColor.systemGreen : Theme.muted
+        confluenceSignedIn.stringValue = settings.hasConfluenceSignIn
+            ? "Signed in to \(settings.confluenceSiteName). Stepwright renews this on its own."
+            : "Not signed in yet."
+    }
+
+    @objc private func confluenceAuthChanged() { showConfluenceRoute() }
+
+    @objc private func consoleTapped() {
+        guard let url = URL(string: Atlassian.consolePage) else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    @objc private func signInConfluenceTapped() {
+        confluenceSecretEdited = confluenceSecretEdited || !confluenceSecret.stringValue.contains("*")
+
+        let id = confluenceClientId.stringValue.trimmingCharacters(in: .whitespaces)
+        let secret = confluenceSecretEdited
+            ? confluenceSecret.stringValue.trimmingCharacters(in: .whitespaces)
+            : settings.confluenceSecret
+
+        confluenceResult.textColor = Theme.muted
+        confluenceResult.stringValue = "Opening the browser..."
+
+        Task { @MainActor in
+            do {
+                let session = try await Atlassian.signIn(
+                    clientId: id,
+                    clientSecret: secret,
+                    progress: { message in
+                        Task { @MainActor in self.confluenceResult.stringValue = message }
+                    })
+
+                // Kept straight away, because a sign in lost by pressing Cancel is worse than
+                // one kept by mistake.
+                self.settings.confluenceAuth = "oauth"
+                self.settings.confluenceClientId = id
+                self.settings.confluenceSecret = secret
+                self.settings.rememberConfluence(session)
+
+                self.confluenceSite.stringValue = self.settings.confluenceSite
+                self.showConfluenceSignIn()
+
+                self.confluenceResult.textColor = NSColor.systemGreen
+                self.confluenceResult.stringValue = "Signed in to " + session.siteName + "."
+            } catch {
+                self.confluenceResult.textColor = NSColor.systemRed
+                self.confluenceResult.stringValue = error.localizedDescription
+            }
+        }
+    }
+
+    @objc private func signOutConfluenceTapped() {
+        settings.forgetConfluence()
+        showConfluenceSignIn()
+
+        confluenceResult.textColor = Theme.muted
+        confluenceResult.stringValue = "Signed out. The application details are kept for next time."
     }
 
     @objc private func saveTapped() {
@@ -646,8 +763,15 @@ final class SettingsWindow: NSWindowController {
             settings.huduKey = huduKey.stringValue.trimmingCharacters(in: .whitespaces)
         }
 
+        settings.confluenceAuth = confluenceAuth.indexOfSelectedItem == 1 ? "oauth" : "token"
         settings.confluenceSite = confluenceSite.stringValue.trimmingCharacters(in: .whitespaces)
         settings.confluenceEmail = confluenceEmail.stringValue.trimmingCharacters(in: .whitespaces)
+        settings.confluenceClientId = confluenceClientId.stringValue.trimmingCharacters(in: .whitespaces)
+
+        if confluenceSecretEdited || !confluenceSecret.stringValue.contains("*") {
+            settings.confluenceSecret = confluenceSecret.stringValue.trimmingCharacters(in: .whitespaces)
+        }
+
         if confluenceTokenEdited || !confluenceToken.stringValue.contains("*") {
             settings.confluenceToken = confluenceToken.stringValue.trimmingCharacters(in: .whitespaces)
         }

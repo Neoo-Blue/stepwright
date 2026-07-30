@@ -451,6 +451,8 @@ mac/Stepwright/Sources
   PdfExport.swift   the document, drawn by the platform
   Assistant.swift   the optional writing pass
   Agents.swift      the signed in command line apps a subscription can be reached through
+  Publish.swift     sending a page to Hudu or Confluence
+  Atlassian.swift   the browser sign in, and the listener that catches the answer
   Views.swift       the preview, the step rows and the floating bar
   MainWindow.swift  the editor
 ```

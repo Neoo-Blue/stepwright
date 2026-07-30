@@ -178,7 +178,7 @@ enum AiAgents {
                 "\(agent.label) is not on this machine. Install it, then sign in with your \(agent.plan) account.")
         }
 
-        let folder = NSTemporaryDirectory() + "stepwright-ai-" + UUID().uuidString.prefix(12)
+        let folder = NSTemporaryDirectory() + "stepwright-ai-" + String(UUID().uuidString.prefix(12))
         try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
 
         defer { try? FileManager.default.removeItem(atPath: folder) }

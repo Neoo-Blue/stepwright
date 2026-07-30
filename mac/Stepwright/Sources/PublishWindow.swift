@@ -176,14 +176,15 @@ final class PublishWindow: NSWindowController {
                 firstTargets = try await client.companies()
             } else {
                 guard settings.hasConfluence else {
-                    say("Confluence is not set up yet. Add the address, your email and a token under Settings.", NSColor.systemRed)
+                    say(
+                        settings.confluenceUsesOAuth
+                            ? "Confluence is not signed in yet. Sign in to Atlassian under Settings."
+                            : "Confluence is not set up yet. Add the address, your email and a token under Settings.",
+                        NSColor.systemRed)
                     return
                 }
 
-                let client = try ConfluenceClient(
-                    site: settings.confluenceSite,
-                    email: settings.confluenceEmail,
-                    token: settings.confluenceToken)
+                let client = try await ConfluenceClient.make(settings: settings)
 
                 confluence = client
                 firstTargets = try await client.spaces()
