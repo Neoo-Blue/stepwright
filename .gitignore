@@ -2,5 +2,10 @@ bin/
 obj/
 *.user
 .DS_Store
-publish/
 artifacts/
+
+# The build output folder at the root only. Written without a leading slash this
+# also matched the source folder named Publish, because macOS does not care about
+# case, and the publishing code silently never reached the repository.
+/publish/
+/mac/Stepwright/build/
