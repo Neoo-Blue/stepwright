@@ -2,6 +2,9 @@
 
 A tool for Windows and macOS that watches you do a task once and writes the guide for you.
 
+<img width="1306" height="853" alt="image" src="https://github.com/user-attachments/assets/ac47f909-6cf3-442d-8199-77ce4ec6ce19" />
+
+
 Click through the procedure. Stepwright captures every click, keystroke, shortcut, drag and
 scroll, takes a screenshot at the exact moment of each action, reads the real name of the
 control you used, and turns all of it into a numbered guide with pictures. Then you tidy the
