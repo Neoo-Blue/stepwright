@@ -95,6 +95,18 @@ enum AiClient {
         }
     }
 
+    /// True for the Claude models that removed the temperature setting rather than ignoring
+    /// it: the 5 family, and 4.6 onwards. The plain names sonnet, opus and haiku are the
+    /// current models, so they belong here too. Anything older is left alone.
+    private static func dropsTemperature(_ model: String) -> Bool {
+        let name = model.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+
+        if name.isEmpty || name == "sonnet" || name == "opus" || name == "haiku" { return true }
+        guard name.hasPrefix("claude") else { return false }
+
+        return ["-5", "-4-6", "-4-7", "-4-8", "fable", "mythos"].contains { name.contains($0) }
+    }
+
     /// Puts the right kind of proof on an Anthropic request.
     private static func sign(_ request: inout URLRequest, key: String, subscriptionToken: Bool) {
         if !key.isEmpty {
@@ -253,13 +265,18 @@ enum AiClient {
               ]
             : system
 
-        let body: [String: Any] = [
+        // Claude thinks before it answers unless told otherwise, and this ceiling covers the
+        // thinking as well as the sentence, so it is set well above what a step needs.
+        var body: [String: Any] = [
             "model": model,
-            "max_tokens": 4096,
-            "temperature": 0.2,
+            "max_tokens": 8192,
             "system": instructions,
             "messages": [["role": "user", "content": content]],
         ]
+
+        // Every current Claude model has dropped the temperature setting and rejects a request
+        // that carries one. The older ones still take it.
+        if !dropsTemperature(model) { body["temperature"] = 0.2 }
 
         let address = base.hasSuffix("/v1") ? base + "/messages" : base + "/v1/messages"
         var request = try post(address, body)

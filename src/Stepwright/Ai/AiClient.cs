@@ -87,26 +87,37 @@ public static class AiClient
             });
         }
 
-        var body = new JsonObject
-        {
-            ["model"] = model,
-            ["temperature"] = 0.2,
-            ["messages"] = new JsonArray
+        JsonNode reply = await SendAsync(
+            model,
+            steady =>
             {
-                new JsonObject { ["role"] = "system", ["content"] = system },
-                new JsonObject { ["role"] = "user", ["content"] = content },
+                var body = new JsonObject
+                {
+                    ["model"] = model,
+                    ["messages"] = new JsonArray
+                    {
+                        new JsonObject { ["role"] = "system", ["content"] = system },
+                        new JsonObject { ["role"] = "user", ["content"] = content },
+                    },
+                };
+
+                if (steady)
+                {
+                    body["temperature"] = 0.2;
+                }
+
+                var request = new HttpRequestMessage(HttpMethod.Post, baseUrl + "/chat/completions");
+
+                if (!string.IsNullOrEmpty(key))
+                {
+                    request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
+                }
+
+                request.Content = Json(body);
+                return request;
             },
-        };
+            token).ConfigureAwait(false);
 
-        using var request = new HttpRequestMessage(HttpMethod.Post, baseUrl + "/chat/completions");
-        if (!string.IsNullOrEmpty(key))
-        {
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
-        }
-
-        request.Content = Json(body);
-
-        JsonNode reply = await SendAsync(request, token).ConfigureAwait(false);
         return reply["choices"]?[0]?["message"]?["content"]?.GetValue<string>() ?? string.Empty;
     }
 
@@ -141,27 +152,43 @@ public static class AiClient
 
         content.Add(new JsonObject { ["type"] = "text", ["text"] = user });
 
-        var body = new JsonObject
-        {
-            ["model"] = model,
-            ["max_tokens"] = 4096,
-            ["temperature"] = 0.2,
-            ["system"] = System(system, subscriptionToken),
-            ["messages"] = new JsonArray
-            {
-                new JsonObject { ["role"] = "user", ["content"] = content },
-            },
-        };
-
         string url = baseUrl.EndsWith("/v1", StringComparison.OrdinalIgnoreCase)
             ? baseUrl + "/messages"
             : baseUrl + "/v1/messages";
 
-        using var request = new HttpRequestMessage(HttpMethod.Post, url);
-        Sign(request, key, subscriptionToken);
-        request.Content = Json(body);
+        JsonNode reply = await SendAsync(
+            model,
+            steady =>
+            {
+                var body = new JsonObject
+                {
+                    // Claude thinks before it answers unless told otherwise, and this ceiling
+                    // covers the thinking as well as the sentence, so it is set well above
+                    // what a rewritten step needs.
+                    ["model"] = model,
+                    ["max_tokens"] = 8192,
+                    ["system"] = System(system, subscriptionToken),
+                    ["messages"] = new JsonArray
+                    {
+                        new JsonObject { ["role"] = "user", ["content"] = content },
+                    },
+                };
 
-        JsonNode reply = await SendAsync(request, token).ConfigureAwait(false);
+                // Every current Claude model has dropped the temperature setting and rejects a
+                // request that carries one. The older ones still take it, so it is offered and
+                // withdrawn if it is refused.
+                if (steady && !DropsTemperature(model))
+                {
+                    body["temperature"] = 0.2;
+                }
+
+                var request = new HttpRequestMessage(HttpMethod.Post, url);
+                Sign(request, key, subscriptionToken);
+                request.Content = Json(body);
+                return request;
+            },
+            token).ConfigureAwait(false);
+
 
         // The answer arrives as a list of blocks, and the text ones are joined.
         if (reply["content"] is JsonArray blocks)
@@ -245,34 +272,42 @@ public static class AiClient
             });
         }
 
-        var body = new JsonObject
-        {
-            ["systemInstruction"] = new JsonObject
-            {
-                ["parts"] = new JsonArray { new JsonObject { ["text"] = system } },
-            },
-            ["contents"] = new JsonArray
-            {
-                new JsonObject { ["role"] = "user", ["parts"] = parts },
-            },
-            ["generationConfig"] = new JsonObject
-            {
-                ["temperature"] = 0.2,
-            },
-        };
-
         string root = baseUrl.Contains("/v1", StringComparison.OrdinalIgnoreCase) ? baseUrl : baseUrl + "/v1beta";
         string url = $"{root}/models/{model}:generateContent";
 
-        using var request = new HttpRequestMessage(HttpMethod.Post, url);
-        if (!string.IsNullOrEmpty(key))
-        {
-            request.Headers.Add("x-goog-api-key", key);
-        }
+        JsonNode reply = await SendAsync(
+            model,
+            steady =>
+            {
+                var body = new JsonObject
+                {
+                    ["systemInstruction"] = new JsonObject
+                    {
+                        ["parts"] = new JsonArray { new JsonObject { ["text"] = system } },
+                    },
+                    ["contents"] = new JsonArray
+                    {
+                        new JsonObject { ["role"] = "user", ["parts"] = parts },
+                    },
+                };
 
-        request.Content = Json(body);
+                if (steady)
+                {
+                    body["generationConfig"] = new JsonObject { ["temperature"] = 0.2 };
+                }
 
-        JsonNode reply = await SendAsync(request, token).ConfigureAwait(false);
+                var request = new HttpRequestMessage(HttpMethod.Post, url);
+
+                if (!string.IsNullOrEmpty(key))
+                {
+                    request.Headers.Add("x-goog-api-key", key);
+                }
+
+                request.Content = Json(body);
+                return request;
+            },
+            token).ConfigureAwait(false);
+
 
         if (reply["candidates"]?[0]?["content"]?["parts"] is JsonArray parts2)
         {
@@ -400,6 +435,75 @@ public static class AiClient
     }
 
     // ------------------------------------------------------------------ shared
+
+    /// <summary>
+    /// Models that answered that they will not be told what temperature to work at. Newer ones
+    /// fix their own and reject the setting outright, so the second attempt is only ever made
+    /// once for each of them.
+    /// </summary>
+    private static readonly HashSet<string> FixedTemperature = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// True for the Claude models that removed the temperature setting rather than ignoring it:
+    /// the 5 family, and 4.6 onwards. The plain names sonnet, opus and haiku are the current
+    /// models, so they belong here too. Anything older is left alone.
+    /// </summary>
+    private static bool DropsTemperature(string? model)
+    {
+        string name = (model ?? string.Empty).Trim();
+
+        if (name.Length == 0 || name is "sonnet" or "opus" or "haiku")
+        {
+            return true;
+        }
+
+        string[] recent = { "-5", "-4-6", "-4-7", "-4-8", "fable", "mythos" };
+
+        return name.StartsWith("claude", StringComparison.OrdinalIgnoreCase)
+            && recent.Any(mark => name.Contains(mark, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// Sends the request, and when the only complaint was the temperature, sends it again
+    /// without one. A rewriting pass wants a steady temperature where it is allowed, and would
+    /// rather have the answer than the setting where it is not.
+    /// </summary>
+    private static async Task<JsonNode> SendAsync(
+        string model,
+        Func<bool, HttpRequestMessage> build,
+        CancellationToken token)
+    {
+        bool steady;
+
+        lock (FixedTemperature)
+        {
+            steady = !FixedTemperature.Contains(model ?? string.Empty);
+        }
+
+        try
+        {
+            using HttpRequestMessage request = build(steady);
+            return await SendAsync(request, token).ConfigureAwait(false);
+        }
+        catch (InvalidOperationException failure) when (steady && Blames(failure.Message, "temperature"))
+        {
+            lock (FixedTemperature)
+            {
+                FixedTemperature.Add(model ?? string.Empty);
+            }
+
+            using HttpRequestMessage retry = build(false);
+            return await SendAsync(retry, token).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>True when the service refused the request because of one named setting.</summary>
+    private static bool Blames(string message, string setting) =>
+        message.Contains(setting, StringComparison.OrdinalIgnoreCase)
+        && (message.Contains("400", StringComparison.Ordinal)
+            || message.Contains("deprecat", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("unsupported", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("not support", StringComparison.OrdinalIgnoreCase));
 
     private static StringContent Json(JsonNode body) =>
         new(body.ToJsonString(), Encoding.UTF8, "application/json");
