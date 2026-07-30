@@ -723,9 +723,10 @@ public sealed class SettingsForm : Form
             ? "This is what makes the steps genuinely good, because the picture shows what a"
               + " browser or an application never reports. The picture for each step is sent to"
               + " the service chosen above, and nowhere else."
-            : SelectedProvider.Label + " takes text and nothing else, so it cannot be shown a"
-              + " screenshot. It can still tidy the wording and decide the shape of the guide,"
-              + " but it cannot name a control it has not been told about.";
+            : SelectedProvider.Label + " takes text and nothing else. With this on, Stepwright"
+              + " reads the words off each screenshot here on this machine and sends only those"
+              + " words, so the assistant can still name the control that was used. No picture"
+              + " leaves the machine either way.";
 
         AiAgent? agent = AiAgents.Find(SelectedProvider.Id);
 

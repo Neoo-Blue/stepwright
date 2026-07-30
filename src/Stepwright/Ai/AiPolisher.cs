@@ -40,7 +40,8 @@ public static class AiPolisher
         AppSettings settings,
         Func<Step, byte[]?> pictureFor,
         IProgress<string>? progress,
-        CancellationToken token)
+        CancellationToken token,
+        Func<Step, string?>? wordsFor = null)
     {
         List<Step> targets = guide.Steps
             .Where(s => s.Kind != StepKind.Heading && !string.IsNullOrWhiteSpace(s.Text))
@@ -55,7 +56,7 @@ public static class AiPolisher
         // switch is honoured where it can be and the text pass is used where it cannot.
         return settings.AiSendScreenshots && AiProviders.Find(settings.AiProvider).SupportsPictures
             ? await WithPicturesAsync(guide, settings, targets, pictureFor, progress, token).ConfigureAwait(true)
-            : await FromTextAsync(guide, settings, targets, progress, token).ConfigureAwait(true);
+            : await FromTextAsync(guide, settings, targets, progress, token, wordsFor).ConfigureAwait(true);
     }
 
     /// <summary>One request per step, each carrying the picture of that step.</summary>
@@ -127,12 +128,20 @@ public static class AiPolisher
         AppSettings settings,
         List<Step> targets,
         IProgress<string>? progress,
-        CancellationToken token)
+        CancellationToken token,
+        Func<Step, string?>? wordsFor = null)
     {
         int changed = 0;
         const int batchSize = 15;
 
         string system = HouseStyle + " "
+            + (wordsFor is null
+                ? string.Empty
+                : "Some steps carry the words read off the screenshot on the person's machine. "
+                  + "Those words are what was really on screen, so trust them over the description "
+                  + "when the two disagree, and use them to name the control that was used. They "
+                  + "arrive in reading order and separated by bars, so a label may be split across "
+                  + "two of them. ")
             + (settings.AiWriteNotes ? NoteStyle + " " : "Leave every note empty. ")
             + "Reply with JSON only in the form {\"steps\":[{\"i\":1,\"text\":\"...\",\"note\":\"...\"}]}.";
 
@@ -151,6 +160,13 @@ public static class AiPolisher
                 payload.AppendLine();
                 payload.AppendLine($"Step {i + 1}");
                 AppendContext(payload, batch[i]);
+
+                string words = wordsFor?.Invoke(batch[i]) ?? string.Empty;
+
+                if (!string.IsNullOrWhiteSpace(words))
+                {
+                    payload.AppendLine("  words on the screen: " + words);
+                }
             }
 
             string reply = await AiClient

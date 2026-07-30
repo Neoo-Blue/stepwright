@@ -220,11 +220,17 @@ client, because Microsoft issues these tokens to a named application rather than
 | Where it runs | inside the Microsoft 365 trust boundary | your own deployment |
 | Maturity | preview, on the beta Graph endpoint | production |
 
-Copilot takes text and nothing else, so the screenshot switch is turned off for it rather than
-quietly ignored, and the settings page says why. It can still tidy the wording and decide the
-shape of a guide, which is most of the value on a browser recording. What it cannot do is name a
-control it was never told about, which is exactly what a remote session needs, so if your work is
-mostly remote sessions then Foundry or one of the other services is the better engine.
+Copilot takes text and nothing else: the message it accepts has exactly one property, a string,
+so there is nothing to code around. Rather than leave it half blind, the screenshot switch means
+something different for it. Windows can recognise text, so Stepwright reads the words off each
+screenshot **on your machine** and sends only those words. The assistant never sees the picture
+and no picture leaves the computer, but it learns that the words by the click were "Create
+account", which is enough to name the control.
+
+That works in a remote session too, and it is the only thing that does, because the accessibility
+tree is blind there and the words on the far screen are the only description of it that exists.
+A picture still beats words where a service can take one, so Foundry reads the screenshots
+properly and Copilot reads what Windows could make out of them.
 
 Foundry is the OpenAI shape underneath, so the model box holds the name you gave the deployment
 rather than a model name, and the address is your own resource. It also accepts a key from the

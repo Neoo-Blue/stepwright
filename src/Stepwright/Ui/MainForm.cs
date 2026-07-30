@@ -1,5 +1,6 @@
 using System.Text;
 using Stepwright.Ai;
+using Stepwright.Capture;
 using Stepwright.Config;
 using Stepwright.Export;
 using Stepwright.Model;
@@ -2480,7 +2481,10 @@ public sealed class MainForm : Form
             // The pictures are prepared together on a worker, so the window stays responsive
             // and the assistant is never waiting on the drawing code.
             var pictures = new Dictionary<string, byte[]>(StringComparer.Ordinal);
-            if (_settings.AiSendScreenshots)
+            var words = new Dictionary<string, string>(StringComparer.Ordinal);
+            bool reads = AiProviders.Find(_settings.AiProvider).SupportsPictures;
+
+            if (_settings.AiSendScreenshots && reads)
             {
                 Status("Preparing the screenshots...");
                 Guide guide = _guide;
@@ -2501,6 +2505,39 @@ public sealed class MainForm : Form
                     return built;
                 }).ConfigureAwait(true);
             }
+            else if (_settings.AiSendScreenshots && ScreenText.Available)
+            {
+                // The chosen service cannot be shown a picture, so the picture is read here
+                // instead and only the words travel. This is the only thing that can name a
+                // control for a service that has never seen the screen.
+                Status("Reading the words off the screenshots...");
+                Guide guide = _guide;
+                AppSettings settings = _settings;
+
+                words = await Task.Run(async () =>
+                {
+                    var found = new Dictionary<string, string>(StringComparer.Ordinal);
+
+                    foreach (Step step in guide.Steps.Where(s => s.HasImage))
+                    {
+                        using Bitmap? shot = GuideRenderer.Render(guide, step, settings, 1600);
+
+                        if (shot is null)
+                        {
+                            continue;
+                        }
+
+                        string read = await ScreenText.ReadAsync(shot).ConfigureAwait(false);
+
+                        if (read.Length > 0)
+                        {
+                            found[step.Id] = read;
+                        }
+                    }
+
+                    return found;
+                }).ConfigureAwait(true);
+            }
 
             // Everything the assistant is about to change is written down first, so the whole
             // pass can be put back with one answer if the person does not like it.
@@ -2514,7 +2551,8 @@ public sealed class MainForm : Form
                     _settings,
                     step => pictures.TryGetValue(step.Id, out byte[]? picture) ? picture : null,
                     progress,
-                    cancel.Token)
+                    cancel.Token,
+                    step => words.TryGetValue(step.Id, out string? read) ? read : null)
                 .ConfigureAwait(true);
 
             // The words are right by now. This second pass decides how many steps there should
