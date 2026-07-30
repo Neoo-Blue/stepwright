@@ -83,6 +83,8 @@ public static class AiShaper
         + "Every value the person typed and every keyboard shortcut must survive somewhere, "
         + "unless the step it came from is left out as noise. Aim for the shortest guide that "
         + "still tells the reader everything they have to do.\n"
+        + "A value that was typed is not always a value the reader should type. Keep it exactly when it belongs to the task and the reader must enter the same thing: an address, a command, a setting, a search, the name of something already in the system. When it was the person's own particulars, tell the reader to enter their own rather than copying someone else's: a name, a date of birth, an email address they are choosing, a phone number, a password. Name the field either way. "
+        + "\n"
         + "Write one short sentence per step, in the imperative, starting with a verb, naming "
         + "the exact button, link, menu or field in quotes. "
         + "A note is optional and is for the reader: a warning, something to have ready first, "

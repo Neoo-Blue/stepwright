@@ -234,7 +234,11 @@ service. It is faster, and it is outside the terms of a consumer plan, since tho
 issued for the vendor's own app. Accounts have been suspended for it. The first two routes are
 the ones to use.
 
-It rewrites the wording of every step and adds a short note where one genuinely helps.
+It rewrites the wording of every step and adds a short note where one genuinely helps. It also
+knows the difference between a value the reader must copy and one they must replace. An address,
+a command or a setting is kept exactly as it was typed. Your own name, birthday, email address
+or password becomes an instruction to enter theirs, because a guide that tells a reader to type
+someone else's name is worse than no guide.
 
 Then it does the harder thing: it decides how many steps there should have been. A recorder
 writes one step per action, which is finer than any reader wants. Opening a tab, typing an

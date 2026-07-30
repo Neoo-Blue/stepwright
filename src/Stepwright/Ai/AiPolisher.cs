@@ -20,7 +20,8 @@ public static class AiPolisher
         "You write instructions for a step by step guide that someone will follow at a computer. "
         + "Write one short sentence in the imperative, starting with a verb. "
         + "Name the exact button, link, menu or field, in quotes, using the words that appear on screen. "
-        + "Keep any value the person typed. Do not invent a step, do not merge steps, do not change the order. "
+        + "Do not invent a step, do not merge steps, do not change the order. "
+        + "A value that was typed is not always a value the reader should type. Keep it exactly when it belongs to the task and the reader must enter the same thing: an address, a command, a setting, a search, the name of something already in the system. When it was the person's own particulars, tell the reader to enter their own rather than copying someone else's: a name, a date of birth, an email address they are choosing, a phone number, a password. Name the field either way. "
         + "Never use a hyphen, an en dash or an em dash anywhere in your answer.";
 
     private const string NoteStyle =
