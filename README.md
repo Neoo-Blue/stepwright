@@ -28,8 +28,8 @@ shared is the `.stepwright` file, so a guide recorded on one opens on the other.
 | Writing assistant | optional, and you pick the service: GPT, Claude, Gemini or your own | their model only |
 | Screenshot framing | four framings per step, switchable after recording | one |
 | Animated steps | built from the screenshot you already took, no extra recording | video is a separate paid product |
-| Publishing | straight into Hudu or Confluence, no file in between | their own workspace only |
-| Output format | yours, defined in a file you can edit and share | fixed |
+| Publishing | straight into Hudu or Confluence, no file in between, on both platforms | their own workspace only |
+| Output format | yours, defined in a file you can edit and share, the same file on both | fixed |
 | A whole guide as one animation | included | not offered |
 
 ## How it works
@@ -79,6 +79,33 @@ A format is a small text file. Settings, on the Format page, will import one, ex
 are using, or duplicate it so you can edit your own copy. They live beside the settings, so a
 format can sit in your own configuration and be handed to someone else.
 
+The file holds 32 settings, and the same file works on both apps. Windows keeps them in
+`%APPDATA%\Stepwright\formats`, macOS in `~/Library/Application Support/Stepwright/formats`.
+
+```json
+{
+  "Name": "Hudu",
+  "InlineStyles": true,
+  "SingleContainer": true,
+  "AllowColor": false,
+  "FontFamily": "Arial, sans-serif",
+  "HeadingSize": 16,
+  "BodySize": 14,
+  "NotePrefix": "Note: ",
+  "UseJpeg": true,
+  "ImageDisplayWidth": 700,
+  "FooterText": "Published from Stepwright on {date}"
+}
+```
+
+`ImagePlaceholder` is the one worth knowing about. Set it and the picture is not written into
+the markup at all, replaced by whatever you put there with `{n}` becoming the step number. That
+is how the Confluence format works, and it is how you would target any other system that keeps
+pictures separately.
+
+There is no field by field editor in the app. Duplicate and edit copies the format and opens the
+folder, and you change the file in a text editor.
+
 ## Exports
 
 * Web page in a single file, with every picture inside it, ready to email or drop on a share
@@ -117,8 +144,9 @@ Publish, then Hudu or Confluence. The guide goes across as an article with no fi
 
 Set both up under Settings, on the Publishing page. Hudu needs the address of your site and an
 API key from Admin then API. Confluence needs the address, the email you sign in with, and an
-API token from your Atlassian account security page. Both are encrypted for your Windows
-account, and each has a button that proves the connection before you rely on it.
+API token from your Atlassian account security page. Each has a button that proves the
+connection before you rely on it. The secrets are encrypted for your Windows account on
+Windows, and kept in the keychain on macOS.
 
 ### Steps without a picture
 
