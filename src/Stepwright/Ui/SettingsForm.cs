@@ -451,9 +451,11 @@ public sealed class SettingsForm : Form
         };
 
         var check = Action("Check the app", async () => await CheckAgentAsync().ConfigureAwait(true));
+        var signIn = Action("Sign in", SignInToAgent);
         var install = Action("How to install it", OpenAgentPage);
 
         row.Controls.Add(check);
+        row.Controls.Add(signIn);
         row.Controls.Add(install);
         _aiCliGroup.Controls.Add(row);
 
@@ -475,10 +477,48 @@ public sealed class SettingsForm : Form
         _aiToken.TextChanged += (_, _) => _tokenEdited = true;
         AddField(_aiTokenGroup, "Token, stored encrypted for this Windows account", _aiToken);
 
+        var row = new FlowLayoutPanel
+        {
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            Dock = DockStyle.Fill,
+            Margin = new Padding(0, 0, 0, 8),
+            BackColor = Color.Transparent,
+            WrapContents = false,
+        };
+
+        row.Controls.Add(Action("Make a token for me", MakeToken));
+        _aiTokenGroup.Controls.Add(row);
+
         AddNote(
             _aiTokenGroup,
-            "Run claude setup-token in a terminal to make one. It goes to the same address as a"
-            + " key, so leave the address as it is.");
+            "That opens a window running claude setup-token, which signs you in through your"
+            + " browser and then prints a token. Copy it and paste it above. It goes to the same"
+            + " address as a key, so leave the address as it is.");
+    }
+
+    /// <summary>
+    /// Claude Code is the only thing that can mint one of these, so the button runs it rather
+    /// than sending the person off to find the instructions.
+    /// </summary>
+    private void MakeToken() => RunInConsole(
+        "claude setup-token",
+        "A window is open running claude setup-token. Sign in when the browser asks, then copy"
+        + " the token it prints and paste it into the token box.");
+
+    private void SignInToAgent()
+    {
+        AiAgent? agent = AiAgents.Find(SelectedProvider.Id);
+
+        if (agent is null)
+        {
+            return;
+        }
+
+        RunInConsole(
+            agent.SignInCommand,
+            $"A window is open running {agent.SignInCommand}. Sign in there with your"
+            + $" {agent.Plan} account, close it, then press Check the app.");
     }
 
     /// <summary>Offers only the routes the chosen service actually has.</summary>
@@ -665,8 +705,19 @@ public sealed class SettingsForm : Form
         _huduKey.TextChanged += (_, _) => _huduKeyEdited = true;
         AddField(table, "API key, from Admin then API in Hudu", _huduKey);
 
-        var huduTest = Action("Test the connection", async () => await TestHuduAsync().ConfigureAwait(true));
-        table.Controls.Add(huduTest);
+        var huduRow = new FlowLayoutPanel
+        {
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            Dock = DockStyle.Fill,
+            Margin = new Padding(0),
+            BackColor = Color.Transparent,
+            WrapContents = false,
+        };
+
+        huduRow.Controls.Add(Action("Test the connection", async () => await TestHuduAsync().ConfigureAwait(true)));
+        huduRow.Controls.Add(Action("Open the key page", OpenHuduKeys));
+        table.Controls.Add(huduRow);
 
         _huduResult.AutoSize = false;
         _huduResult.Height = 34;
@@ -697,6 +748,19 @@ public sealed class SettingsForm : Form
 
         _confluenceToken.TextChanged += (_, _) => _confluenceTokenEdited = true;
         AddField(_confluenceTokenGroup, "API token, from your Atlassian account security page", _confluenceToken);
+
+        var atlassianRow = new FlowLayoutPanel
+        {
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            Dock = DockStyle.Fill,
+            Margin = new Padding(0, 0, 0, 8),
+            BackColor = Color.Transparent,
+            WrapContents = false,
+        };
+
+        atlassianRow.Controls.Add(Action("Open the token page", () => Open(AtlassianTokenPage)));
+        _confluenceTokenGroup.Controls.Add(atlassianRow);
         table.Controls.Add(_confluenceTokenGroup);
 
         BuildConfluenceOAuthGroup();
@@ -1079,6 +1143,36 @@ public sealed class SettingsForm : Form
 
     private void OpenKeyPage() => Open(SelectedProvider.KeyPage);
 
+    private const string AtlassianTokenPage = "https://id.atlassian.com/manage-profile/security/api-tokens";
+
+    /// <summary>
+    /// Hudu keeps its keys under the admin area of your own site, so the address is built from
+    /// the one already filled in rather than being somewhere on the internet.
+    /// </summary>
+    private void OpenHuduKeys()
+    {
+        string site = _huduUrl.Text.Trim().TrimEnd('/');
+
+        if (site.Length == 0)
+        {
+            MessageBox.Show(
+                this,
+                "Fill in the address of your Hudu site first, then this opens the page where its keys live.",
+                "Stepwright",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
+
+            return;
+        }
+
+        if (!site.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+        {
+            site = "https://" + site;
+        }
+
+        Open(site + "/admin/api_keys");
+    }
+
     private static void Open(string address)
     {
         if (string.IsNullOrWhiteSpace(address))
@@ -1097,6 +1191,46 @@ public sealed class SettingsForm : Form
         {
             // No browser association, nothing sensible to do.
         }
+    }
+
+    /// <summary>
+    /// Opens a console window with the command already running, and leaves it open afterwards.
+    /// These sign ins open a browser themselves and then print something worth reading, so the
+    /// window has to stay rather than flash past.
+    /// </summary>
+    private void RunInConsole(string command, string what)
+    {
+        if (string.IsNullOrWhiteSpace(command))
+        {
+            return;
+        }
+
+        try
+        {
+            using var process = new System.Diagnostics.Process();
+            process.StartInfo.FileName = Environment.GetEnvironmentVariable("COMSPEC") ?? "cmd.exe";
+            process.StartInfo.Arguments = "/k " + command;
+            process.StartInfo.UseShellExecute = true;
+            process.Start();
+        }
+        catch (Exception error)
+        {
+            MessageBox.Show(
+                this,
+                $"A window could not be opened for {command}. Run it yourself in a terminal. {error.Message}",
+                "Stepwright",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+
+            return;
+        }
+
+        MessageBox.Show(
+            this,
+            what,
+            "Stepwright",
+            MessageBoxButtons.OK,
+            MessageBoxIcon.Information);
     }
 
     /// <summary>The values the buttons on this page should be tried against.</summary>

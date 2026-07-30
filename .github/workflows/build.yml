@@ -159,11 +159,31 @@ jobs:
           path: artifacts/*.exe
           retention-days: 30
 
+      # The message written on the tag is the note a person actually wants to read. Without
+      # this the release carries only a link to the list of commits.
+      - name: Take the notes from the tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          git fetch --force origin "refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}"
+          git tag -l --format='%(contents:body)' "${GITHUB_REF_NAME}" > release-notes.md
+
+          if [ ! -s release-notes.md ]; then
+            git tag -l --format='%(contents)' "${GITHUB_REF_NAME}" > release-notes.md
+          fi
+
+          if [ ! -s release-notes.md ]; then
+            echo "See the commits below for what changed." > release-notes.md
+          fi
+
+          cat release-notes.md
+
       - name: Attach the builds to the release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           files: artifacts/*.exe
+          body_path: release-notes.md
           generate_release_notes: true
 
   mac:

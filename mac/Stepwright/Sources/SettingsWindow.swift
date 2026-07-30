@@ -177,6 +177,7 @@ final class SettingsWindow: NSWindowController {
         confluenceTokenViews = [
             caption("The email address you sign in with"), confluenceEmail,
             caption("API token, from your Atlassian account security page"), confluenceToken,
+            row([NSButton(title: "Open the token page", target: self, action: #selector(atlassianTokensTapped))]),
         ]
 
         confluenceSignedIn.font = .systemFont(ofSize: 10.5)
@@ -207,7 +208,10 @@ final class SettingsWindow: NSWindowController {
             heading("Hudu"),
             caption("Address of your site"), huduSite,
             caption("API key, from Admin then API in Hudu"), huduKey,
-            NSButton(title: "Test the connection", target: self, action: #selector(testHuduTapped)),
+            row([
+                NSButton(title: "Test the connection", target: self, action: #selector(testHuduTapped)),
+                NSButton(title: "Open the key page", target: self, action: #selector(huduKeysTapped)),
+            ]),
             huduResult,
             heading("Confluence"),
             caption("How Stepwright signs in"), confluenceAuth,
@@ -234,6 +238,7 @@ final class SettingsWindow: NSWindowController {
             aiCliStatus,
             row([
                 NSButton(title: "Check the app", target: self, action: #selector(checkAgentTapped)),
+                NSButton(title: "Sign in", target: self, action: #selector(signInAgentTapped)),
                 NSButton(title: "How to install it", target: self, action: #selector(agentPageTapped)),
             ]),
             caption("Where the app is, only when it lives somewhere unusual"), aiCliPath,
@@ -244,7 +249,9 @@ final class SettingsWindow: NSWindowController {
                  + " it from anything else is outside the terms of a consumer plan. Accounts have"
                  + " been suspended for it. The safe route is the app above, or a key."),
             caption("Token, kept in your keychain"), aiToken,
-            note("Run claude setup-token in Terminal to make one."),
+            row([NSButton(title: "Make a token for me", target: self, action: #selector(makeTokenTapped))]),
+            note("That opens Terminal running claude setup-token, which signs you in through your"
+                 + " browser and then prints a token. Copy it and paste it above."),
         ]
 
         aiAuth.target = self
@@ -425,6 +432,51 @@ final class SettingsWindow: NSWindowController {
               let url = URL(string: agent.installPage) else { return }
 
         NSWorkspace.shared.open(url)
+    }
+
+    @objc private func signInAgentTapped() {
+        guard let agent = AiAgents.find(chosenProvider.id) else { return }
+
+        runInTerminal(
+            agent.signInCommand,
+            what: "Terminal is running \(agent.signInCommand). Sign in there with your"
+                + " \(agent.plan) account, then come back and press Check the app.")
+    }
+
+    /// Claude Code is the only thing that can mint one of these, so the button runs it rather
+    /// than sending the person off to find the instructions.
+    @objc private func makeTokenTapped() {
+        runInTerminal(
+            "claude setup-token",
+            what: "Terminal is running claude setup-token. Sign in when the browser asks, then"
+                + " copy the token it prints and paste it into the token box.")
+    }
+
+    /// Opens Terminal with the command already running. These sign ins open a browser and then
+    /// print something worth reading, so a window that stays is the point.
+    private func runInTerminal(_ command: String, what: String) {
+        let path = NSTemporaryDirectory() + "stepwright-signin.command"
+
+        let script = """
+        #!/bin/sh
+        \(command)
+        """
+
+        do {
+            try script.write(toFile: path, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: path)
+        } catch {
+            aiCliStatus.textColor = .systemRed
+            aiCliStatus.stringValue = "Terminal could not be opened. Run \(command) yourself."
+            return
+        }
+
+        NSWorkspace.shared.open(URL(fileURLWithPath: path))
+
+        let alert = NSAlert()
+        alert.messageText = "Stepwright"
+        alert.informativeText = what
+        alert.runModal()
     }
 
     private var chosenProvider: AiProvider {
@@ -677,6 +729,29 @@ final class SettingsWindow: NSWindowController {
 
     @objc private func consoleTapped() {
         guard let url = URL(string: Atlassian.consolePage) else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    @objc private func atlassianTokensTapped() {
+        guard let url = URL(string: "https://id.atlassian.com/manage-profile/security/api-tokens") else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    /// Hudu keeps its keys under the admin area of your own site, so the address is built from
+    /// the one already filled in rather than being somewhere on the internet.
+    @objc private func huduKeysTapped() {
+        var site = huduSite.stringValue.trimmingCharacters(in: .whitespaces)
+        while site.hasSuffix("/") { site.removeLast() }
+
+        guard !site.isEmpty else {
+            huduResult.textColor = Theme.muted
+            huduResult.stringValue = "Fill in the address of your Hudu site first."
+            return
+        }
+
+        if !site.lowercased().hasPrefix("http") { site = "https://" + site }
+
+        guard let url = URL(string: site + "/admin/api_keys") else { return }
         NSWorkspace.shared.open(url)
     }
 

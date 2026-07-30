@@ -34,6 +34,9 @@ struct AiAgent {
     /// What the person types once, in a terminal, to sign in.
     let signIn: String
 
+    /// The command a Sign in button runs for them, in a window they can see.
+    let signInCommand: String
+
     /// Which plan pays for it, said plainly for the settings page.
     let plan: String
     let installPage: String
@@ -52,6 +55,7 @@ enum AiAgents {
             label: "Claude Code",
             command: "claude",
             signIn: "Run claude in Terminal once and sign in, or type /login inside it.",
+            signInCommand: "claude",
             plan: "Claude Pro or Claude Max",
             installPage: "https://docs.claude.com/en/docs/claude-code/setup",
             models: ["sonnet", "opus", "haiku"],
@@ -61,6 +65,7 @@ enum AiAgents {
             label: "Codex",
             command: "codex",
             signIn: "Run codex login in Terminal once and choose Sign in with ChatGPT.",
+            signInCommand: "codex login",
             plan: "ChatGPT Plus, Pro, Business or Enterprise",
             installPage: "https://developers.openai.com/codex/cli",
             models: ["gpt-5.1-codex", "gpt-5.1"],
@@ -70,6 +75,7 @@ enum AiAgents {
             label: "Gemini CLI",
             command: "gemini",
             signIn: "Run gemini in Terminal once and sign in with your Google account.",
+            signInCommand: "gemini",
             plan: "A Google account, or a Gemini Code Assist plan",
             installPage: "https://github.com/google-gemini/gemini-cli",
             models: ["gemini-2.5-pro", "gemini-2.5-flash"],

@@ -43,6 +43,9 @@ public sealed class AiAgent
     /// <summary>What the person types once, in a terminal, to sign in.</summary>
     public required string SignIn { get; init; }
 
+    /// <summary>The command a Sign in button runs for them, in a window they can see.</summary>
+    public required string SignInCommand { get; init; }
+
     /// <summary>Which plan pays for it, said plainly for the settings page.</summary>
     public required string Plan { get; init; }
 
@@ -65,6 +68,7 @@ public static class AiAgents
             Label = "Claude Code",
             Command = "claude",
             SignIn = "Run claude in a terminal once and sign in, or type /login inside it.",
+            SignInCommand = "claude",
             Plan = "Claude Pro or Claude Max",
             InstallPage = "https://docs.claude.com/en/docs/claude-code/setup",
             Models = new[] { string.Empty, "sonnet", "opus", "haiku" },
@@ -75,6 +79,7 @@ public static class AiAgents
             Label = "Codex",
             Command = "codex",
             SignIn = "Run codex login in a terminal once and choose Sign in with ChatGPT.",
+            SignInCommand = "codex login",
             Plan = "ChatGPT Plus, Pro, Business or Enterprise",
             InstallPage = "https://developers.openai.com/codex/cli",
             Models = new[] { string.Empty, "gpt-5.1-codex", "gpt-5.1" },
@@ -86,6 +91,7 @@ public static class AiAgents
             Label = "Gemini CLI",
             Command = "gemini",
             SignIn = "Run gemini in a terminal once and sign in with your Google account.",
+            SignInCommand = "gemini",
             Plan = "A Google account, or a Gemini Code Assist plan",
             InstallPage = "https://github.com/google-gemini/gemini-cli",
             Models = new[] { string.Empty, "gemini-2.5-pro", "gemini-2.5-flash" },
