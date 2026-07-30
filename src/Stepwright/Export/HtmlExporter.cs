@@ -290,13 +290,20 @@ public static class HtmlExporter
         ("sw-text", Font(format) + $"font-size:{format.BodySize}px;margin-bottom:{format.BlockSpacing}px;");
 
     private static (string, string) Note(FormatProfile format) =>
-        ("sw-note", Font(format) + $"font-size:{format.NoteSize}px;margin-bottom:{format.BlockSpacing}px;");
+        ("sw-note", Font(format) + $"font-size:{format.NoteSize}px;margin-bottom:{format.BlockSpacing}px;" + Quiet(format));
 
     private static (string, string) Meta(FormatProfile format) =>
-        ("sw-meta", Font(format) + $"font-size:{format.MetaSize}px;margin-bottom:{format.BlockSpacing}px;");
+        ("sw-meta", Font(format) + $"font-size:{format.MetaSize}px;margin-bottom:{format.BlockSpacing}px;" + Quiet(format));
 
     private static (string, string) Footer(FormatProfile format) =>
-        ("sw-foot", Font(format) + $"font-size:{format.MetaSize}px;margin-top:18px;padding-top:8px;border-top:1px solid;opacity:.7;");
+        ("sw-foot", Font(format) + $"font-size:{format.MetaSize}px;margin-top:18px;padding-top:8px;border-top:1px solid;" + Quiet(format));
+
+    /// <summary>
+    /// How the less important text is held back. A format that is not allowed to state a
+    /// colour fades it instead, so the receiving system keeps control of light and dark mode.
+    /// </summary>
+    private static string Quiet(FormatProfile format) =>
+        format.AllowColor ? "color:#6c7480;" : "opacity:.7;";
 
     private static (string, string) List(FormatProfile format) =>
         ("sw-steps", Font(format) + $"font-size:{format.BodySize}px;margin-top:0px;margin-bottom:{format.BlockSpacing}px;");
@@ -334,10 +341,10 @@ public static class HtmlExporter
         css.AppendLine($".sw-doc {{ max-width: 860px; margin: 0 auto; padding: 40px 24px 72px; font-family: {font}; font-size: {format.BodySize}px; line-height: 1.55; }}");
         css.AppendLine($".sw-doc h1 {{ font-size: {format.TitleSize}px; line-height: 1.2; margin: 0 0 12px; }}");
         css.AppendLine($".sw-section {{ font-size: {format.HeadingSize}px; margin: 32px 0 10px; }}");
-        css.AppendLine($".sw-meta {{ font-size: {format.MetaSize}px; opacity: 0.72; margin-bottom: 24px; }}");
+        css.AppendLine($".sw-meta {{ font-size: {format.MetaSize}px; {Faded(format, 0.72)} margin-bottom: 24px; }}");
         css.AppendLine($".sw-steps {{ margin-top: 0; margin-bottom: {format.BlockSpacing}px; padding-left: 22px; }}");
         css.AppendLine($".sw-step {{ margin-bottom: {format.BlockSpacing + 12}px; }}");
-        css.AppendLine($".sw-note {{ font-size: {format.NoteSize}px; opacity: 0.8; margin: 6px 0 {format.BlockSpacing}px; }}");
+        css.AppendLine($".sw-note {{ font-size: {format.NoteSize}px; {Faded(format, 0.8)} margin: 6px 0 {format.BlockSpacing}px; }}");
 
         var image = new StringBuilder(".sw-shot { display: block; height: auto; max-width: 100%;");
         image.Append(format.ImageDisplayWidth > 0 ? $" width: {format.ImageDisplayWidth}px;" : string.Empty);
@@ -346,11 +353,19 @@ public static class HtmlExporter
         image.AppendLine(" }");
         css.Append(image);
 
-        css.AppendLine($".sw-foot {{ font-size: {format.MetaSize}px; opacity: 0.6; margin-top: 40px; padding-top: 12px; border-top: 1px solid rgba(128,128,128,0.3); }}");
+        css.AppendLine($".sw-foot {{ font-size: {format.MetaSize}px; {Faded(format, 0.6)} margin-top: 40px; padding-top: 12px; border-top: 1px solid rgba(128,128,128,0.3); }}");
+
+        if (format.AllowColor)
+        {
+            css.AppendLine(".sw-num { background: #2563eb; color: #fff; }");
+        }
         css.AppendLine("@media print { .sw-step { break-inside: avoid; page-break-inside: avoid; } .sw-foot { display: none; } }");
 
         return css.ToString();
     }
+
+    private static string Faded(FormatProfile format, double amount) =>
+        format.AllowColor ? "color: #6c7480;" : $"opacity: {amount};";
 
     private const string PageCss = """
     :root { color-scheme: light dark; }
