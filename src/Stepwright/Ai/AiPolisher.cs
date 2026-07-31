@@ -132,7 +132,14 @@ public static class AiPolisher
         Func<Step, string?>? wordsFor = null)
     {
         int changed = 0;
-        const int batchSize = 15;
+        int unreadable = 0;
+
+        // A page route is a chat window, and a chat window answers a long question with a long
+        // answer that it likes to reformat, wrap or shorten. Fewer steps in a batch means a
+        // shorter answer, which is the difference between a reply that can be read and one that
+        // cannot. The services with a real interface are asked for more at once, as before.
+        bool throughPage = AiAuthKinds.Clean(settings.AiAuth) == AiAuthKinds.Browser;
+        int batchSize = throughPage ? 4 : 15;
 
         string system = HouseStyle + " "
             + (wordsFor is null
@@ -173,9 +180,14 @@ public static class AiPolisher
                 .CompleteAsync(settings, system, payload.ToString(), null, token)
                 .ConfigureAwait(true);
 
-            JsonNode? parsed = ParseNode(reply);
-            if (parsed?["steps"] is not JsonArray steps)
+            JsonArray? steps = Steps(reply);
+
+            if (steps is null)
             {
+                // A batch that could not be read is remembered rather than passed over in
+                // silence, because a run that changes nothing and says nothing is the one thing
+                // a person cannot act on.
+                unreadable++;
                 continue;
             }
 
@@ -194,7 +206,101 @@ public static class AiPolisher
             }
         }
 
+        // Nothing changed and nothing could be read is a failure, not a result. Said plainly, so
+        // it is not mistaken for the assistant having looked and found nothing worth improving.
+        if (changed == 0 && unreadable > 0)
+        {
+            throw new InvalidOperationException(
+                "The assistant answered but not in the form the rewrite needs, so no step was"
+                + " changed. This happens with a chat page that reformats what it is asked for."
+                + " Try again, or use a key for this work.");
+        }
+
         return changed;
+    }
+
+    /// <summary>
+    /// The rewritten steps out of a reply, however the service chose to wrap them. The plain shape
+    /// is an object holding a list called steps. A chat page may hand back the list on its own, or
+    /// the steps loose in the text with prose around them, and all three are the same answer.
+    /// </summary>
+    private static JsonArray? Steps(string reply)
+    {
+        JsonNode? parsed = ParseNode(reply);
+
+        if (parsed?["steps"] is JsonArray listed)
+        {
+            return listed;
+        }
+
+        if (parsed is JsonArray bare && bare.Count > 0)
+        {
+            return bare;
+        }
+
+        // Loose steps, gathered one at a time. Anything carrying a number and a line of text is a
+        // rewritten step, whatever it is sitting inside.
+        var gathered = new JsonArray();
+
+        foreach (JsonNode? found in Objects(reply))
+        {
+            if (found?["i"] is not null && found["text"] is not null)
+            {
+                gathered.Add(found.DeepClone());
+            }
+        }
+
+        return gathered.Count > 0 ? gathered : null;
+    }
+
+    /// <summary>Every object that can be read out of a reply, in the order they appear.</summary>
+    private static IEnumerable<JsonNode?> Objects(string reply)
+    {
+        string straight = reply
+            .Replace('“', '"')
+            .Replace('”', '"')
+            .Replace('‘', '\'')
+            .Replace('’', '\'');
+
+        for (int at = straight.IndexOf('{'); at >= 0; at = straight.IndexOf('{', at + 1))
+        {
+            int depth = 0;
+
+            for (int i = at; i < straight.Length; i++)
+            {
+                if (straight[i] == '{')
+                {
+                    depth++;
+                }
+                else if (straight[i] == '}')
+                {
+                    depth--;
+
+                    if (depth != 0)
+                    {
+                        continue;
+                    }
+
+                    JsonNode? node = null;
+
+                    try
+                    {
+                        node = JsonNode.Parse(straight[at..(i + 1)]);
+                    }
+                    catch (JsonException)
+                    {
+                        // Not an object after all. The next opening brace is tried instead.
+                    }
+
+                    if (node is not null)
+                    {
+                        yield return node;
+                    }
+
+                    break;
+                }
+            }
+        }
     }
 
     private static void AppendContext(StringBuilder payload, Step step)
