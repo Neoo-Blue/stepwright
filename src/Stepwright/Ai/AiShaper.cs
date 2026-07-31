@@ -334,7 +334,9 @@ public static class AiShaper
         }
         catch (JsonException)
         {
-            return null;
+            // A chat page answers like a person, wrapping the reply in a sentence or curling the
+            // quotes. The same salvage the polisher uses is applied here.
+            return AiPolisher.Salvage(reply);
         }
     }
 

@@ -417,12 +417,14 @@ public static class AiPolisher
     {
         // A whole distinctive line rather than a single word, because the page routes find the
         // answer by looking for the substantial new thing on the page, and a one word reply can
-        // be outweighed by a suggestion chip that happens to be longer.
+        // be outweighed by a suggestion chip that happens to be longer. The instruction is the
+        // whole of it, with nothing following, because a route that hands the model one run of
+        // text would otherwise leave a stray word on the end for it to repeat.
         string reply = await AiClient
             .CompleteAsync(
                 settings,
+                "You are checking a connection.",
                 "Reply with exactly this line and nothing else: Stepwright connection confirmed.",
-                "ping",
                 null,
                 token)
             .ConfigureAwait(true);
@@ -457,8 +459,61 @@ public static class AiPolisher
         }
         catch (JsonException)
         {
-            return null;
+            // A chat page answers like a person: it may wrap the reply in a sentence, put it in a
+            // fenced block, or write a curly quote where a straight one belongs. So the widest
+            // reading is tried first, and then each smaller piece that looks like an object on its
+            // own, which is what survives a model that explained itself before answering.
+            return Salvage(reply);
         }
+    }
+
+    /// <summary>
+    /// Pulls the first thing that reads as an object out of a reply that carried more than one.
+    /// Straight quotes are put back first, because a rich text box is fond of curling them and a
+    /// curled quote is not json.
+    /// </summary>
+    internal static JsonNode? Salvage(string reply)
+    {
+        string straight = reply
+            .Replace('“', '"')
+            .Replace('”', '"')
+            .Replace('‘', '\'')
+            .Replace('’', '\'');
+
+        for (int at = straight.IndexOf('{'); at >= 0; at = straight.IndexOf('{', at + 1))
+        {
+            int depth = 0;
+
+            for (int i = at; i < straight.Length; i++)
+            {
+                if (straight[i] == '{')
+                {
+                    depth++;
+                }
+                else if (straight[i] == '}')
+                {
+                    depth--;
+
+                    if (depth != 0)
+                    {
+                        continue;
+                    }
+
+                    try
+                    {
+                        return JsonNode.Parse(straight[at..(i + 1)]);
+                    }
+                    catch (JsonException)
+                    {
+                        // Not this one. The next opening brace is tried instead.
+                    }
+
+                    break;
+                }
+            }
+        }
+
+        return null;
     }
 
     private static string Tidy(string text)

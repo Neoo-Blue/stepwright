@@ -576,8 +576,10 @@ public static class CopilotWeb
             let t = '';
             try { t = norm(last.innerText); } catch (e) { return ''; }
 
-            // The suggestions under an answer sit inside it, and they are not part of what was
-            // said, so their words are taken back out.
+            // The suggestions and the buttons under an answer sit inside it, and they always come
+            // after what was said. So the text is cut at the first of them rather than having
+            // their words struck out wherever they appear, which would quietly damage an answer
+            // that happened to contain the same phrase.
             let aside = [];
             try {
               aside = [...last.querySelectorAll('[role="toolbar"], button, [role="button"]')]
@@ -585,10 +587,18 @@ public static class CopilotWeb
                 .filter(s => s.length > 2);
             } catch (e) {}
 
-            for (const piece of aside) { t = t.split(piece).join(' '); }
-
             t = t.replace(/^copilot said:\s*/i, '');
-            t = t.replace(/ai-generated content may be incorrect/ig, '');
+
+            let cut = t.length;
+            for (const piece of aside) {
+              const at = t.indexOf(piece);
+              if (at > 0 && at < cut) { cut = at; }
+            }
+
+            const notice = t.search(/ai-generated content may be incorrect/i);
+            if (notice > 0 && notice < cut) { cut = notice; }
+
+            t = t.slice(0, cut);
 
             return stripChrome(norm(t));
           };
