@@ -86,6 +86,18 @@ jobs:
           if ($text -notmatch "NETSCAPE2.0") { throw "the looping marker is missing" }
           Write-Host "animation header, looping marker and trailer are correct"
 
+      # A build that cannot say which version it is turns every screenshot into a guess. On a
+      # tag the version is the tag without its v; off a tag it is a plain development marker.
+      - name: Work out the version
+        shell: bash
+        run: |
+          ref="${GITHUB_REF_NAME}"
+          if [[ "$ref" == v* ]]; then
+            echo "BUILD_VERSION=${ref#v}" >> "$GITHUB_ENV"
+          else
+            echo "BUILD_VERSION=0.0.0" >> "$GITHUB_ENV"
+          fi
+
       - name: Publish the standalone build
         run: >
           dotnet publish src/Stepwright/Stepwright.csproj
@@ -94,6 +106,7 @@ jobs:
           -p:IncludeNativeLibrariesForSelfExtract=true
           -p:EnableCompressionInSingleFile=true
           -p:DebugType=none
+          -p:Version=$BUILD_VERSION
           -o publish/standalone
 
       - name: Publish the small build
@@ -102,6 +115,7 @@ jobs:
           -c Release -r win-x64 --self-contained false
           -p:PublishSingleFile=true
           -p:DebugType=none
+          -p:Version=$BUILD_VERSION
           -o publish/compact
 
       - name: Name the outputs

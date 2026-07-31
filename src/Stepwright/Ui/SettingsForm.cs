@@ -107,7 +107,7 @@ public sealed class SettingsForm : Form
         _settings = settings;
         _chosenMarker = StepRenderer.Parse(settings.MarkerColor, Color.OrangeRed);
 
-        Text = "Stepwright settings";
+        Text = Build.Titled("Stepwright settings");
         FormBorderStyle = FormBorderStyle.Sizable;
         MinimizeBox = false;
         MaximizeBox = false;
@@ -1153,7 +1153,16 @@ public sealed class SettingsForm : Form
 
         AiAgent? agent = AiAgents.Find(SelectedProvider.Id);
 
-        if (auth == AiAuthKinds.Cli && agent is not null)
+        // Copilot has no model to choose: the page is whatever Copilot is, and the work account
+        // route does not let one be named. So the field and its button are turned off rather
+        // than left to earn a 404.
+        if (SelectedProvider.Id == AiProviders.Copilot)
+        {
+            _aiModels.Enabled = false;
+            _aiModel.Enabled = false;
+            _aiModelNote.Text = "Copilot has no model to choose. Whatever your Copilot is, is what answers.";
+        }
+        else if (auth == AiAuthKinds.Cli && agent is not null)
         {
             string? found = AiAgents.Locate(agent, _aiCliPath.Text.Trim());
 
@@ -1163,6 +1172,7 @@ public sealed class SettingsForm : Form
                 : $"Found {agent.Label} at {found}. {agent.SignIn}";
 
             _aiModels.Enabled = true;
+            _aiModel.Enabled = true;
             _aiModelNote.Text =
                 "Leave the model empty to use whatever the app is already set to. Find models"
                 + " offers the usual names.";
@@ -1170,6 +1180,7 @@ public sealed class SettingsForm : Form
         else
         {
             _aiModels.Enabled = true;
+            _aiModel.Enabled = true;
             _aiModelNote.Text = "Find models asks the service which ones your key is allowed to use.";
         }
 

@@ -1025,6 +1025,14 @@ public static class AiClient
                 : agent.Models.Where(m => m.Length > 0).ToList();
         }
 
+        // Copilot has no model to choose, whichever way it is reached. The page is whatever
+        // Copilot is, and the work account route does not let one be named, so there is nothing
+        // to ask and asking only earns a 404.
+        if (provider == AiProviders.Copilot)
+        {
+            return Array.Empty<string>();
+        }
+
         // The ChatGPT and Gemini subscription backends have no models list to ask, and asking
         // their own way would spend a real request, so the names they answer to are offered.
         if (auth == AiAuthKinds.Subscription && provider == AiProviders.OpenAi)

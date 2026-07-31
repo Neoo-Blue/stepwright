@@ -63,7 +63,7 @@ public sealed class MainForm : Form
 
         _drawColor = StepRenderer.Parse(settings.MarkerColor, Color.OrangeRed);
 
-        Text = "Stepwright";
+        Text = Build.Titled("Stepwright");
         MinimumSize = new Size(1040, 680);
         Size = new Size(1320, 860);
         StartPosition = FormStartPosition.CenterScreen;
