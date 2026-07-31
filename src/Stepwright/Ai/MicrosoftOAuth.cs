@@ -11,6 +11,16 @@ public sealed class MicrosoftSession
     public required string RefreshToken { get; init; }
 
     public required DateTimeOffset Expires { get; init; }
+
+    /// <summary>
+    /// Which organisation the sign in belongs to. A technician holding an account at their own
+    /// company and a guest account at a customer has two of these, and nothing on screen would
+    /// otherwise say which one answered.
+    /// </summary>
+    public string TenantId { get; init; } = string.Empty;
+
+    /// <summary>Who signed in, as they would recognise themselves.</summary>
+    public string Account { get; init; } = string.Empty;
 }
 
 /// <summary>
@@ -40,6 +50,8 @@ public static class MicrosoftOAuth
         "https://graph.microsoft.com/ChannelMessage.Read.All",
         "https://graph.microsoft.com/ExternalItem.Read.All",
         "offline_access",
+        "openid",
+        "profile",
     };
 
     /// <summary>What Azure AI Foundry asks for. One permission, plus offline access.</summary>
@@ -47,6 +59,8 @@ public static class MicrosoftOAuth
     {
         "https://cognitiveservices.azure.com/.default",
         "offline_access",
+        "openid",
+        "profile",
     };
 
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(60) };
@@ -178,6 +192,7 @@ public static class MicrosoftOAuth
         }
 
         int seconds = granted["expires_in"]?.GetValue<int>() ?? 3600;
+        (string tenant, string account) = Whose(granted["id_token"]?.GetValue<string>());
 
         return new MicrosoftSession
         {
@@ -186,7 +201,49 @@ public static class MicrosoftOAuth
 
             // A minute is taken off so a request cannot start on a token that ends mid flight.
             Expires = DateTimeOffset.UtcNow.AddSeconds(Math.Max(60, seconds - 60)),
+            TenantId = tenant,
+            Account = account,
         };
+    }
+
+    /// <summary>
+    /// Reads the organisation and the account out of the identity token. Nothing is trusted on
+    /// the strength of this: it is read so a person can be told who they signed in as, and so a
+    /// later sign in that lands in a different organisation can be refused rather than used.
+    /// </summary>
+    private static (string Tenant, string Account) Whose(string? identity)
+    {
+        if (string.IsNullOrWhiteSpace(identity))
+        {
+            return (string.Empty, string.Empty);
+        }
+
+        string[] parts = identity.Split('.');
+
+        if (parts.Length < 2)
+        {
+            return (string.Empty, string.Empty);
+        }
+
+        try
+        {
+            string middle = parts[1].Replace('-', '+').Replace('_', '/');
+            middle = middle.PadRight(middle.Length + ((4 - (middle.Length % 4)) % 4), '=');
+
+            JsonNode? claims = JsonNode.Parse(Convert.FromBase64String(middle));
+
+            return (
+                claims?["tid"]?.GetValue<string>() ?? string.Empty,
+                claims?["preferred_username"]?.GetValue<string>()
+                    ?? claims?["upn"]?.GetValue<string>()
+                    ?? claims?["name"]?.GetValue<string>()
+                    ?? string.Empty);
+        }
+        catch
+        {
+            // A token shaped differently than expected is not worth failing a sign in over.
+            return (string.Empty, string.Empty);
+        }
     }
 
     private static async Task<JsonNode> FormAsync(

@@ -77,6 +77,10 @@ public sealed class AppSettings
     public string AiAccessProtected { get; set; } = string.Empty;
     public DateTimeOffset AiAccessExpires { get; set; }
 
+    /// <summary>Which organisation the sign in belongs to, and who it belongs to.</summary>
+    public string AiTenantId { get; set; } = string.Empty;
+    public string AiAccount { get; set; } = string.Empty;
+
     /// <summary>
     /// Lets the assistant look at the screenshot for each step, which is what makes it able
     /// to name what is actually on screen. Off by default, because pictures leaving the
@@ -228,6 +232,16 @@ public sealed class AppSettings
         AiAccessProtected = Protect(session.AccessToken);
         AiRefreshProtected = Protect(session.RefreshToken);
         AiAccessExpires = session.Expires;
+
+        if (!string.IsNullOrWhiteSpace(session.TenantId))
+        {
+            AiTenantId = session.TenantId;
+        }
+
+        if (!string.IsNullOrWhiteSpace(session.Account))
+        {
+            AiAccount = session.Account;
+        }
     }
 
     public void ForgetMicrosoft()
@@ -235,6 +249,8 @@ public sealed class AppSettings
         AiAccessProtected = string.Empty;
         AiRefreshProtected = string.Empty;
         AiAccessExpires = default;
+        AiTenantId = string.Empty;
+        AiAccount = string.Empty;
     }
 
     [JsonIgnore]

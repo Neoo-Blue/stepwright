@@ -149,6 +149,11 @@ Set both up under Settings, on the Publishing page. Hudu needs the address of yo
 API key from Admin then API, which is the only thing its API accepts. Confluence takes either
 the email you sign in with plus an API token, or a browser sign in.
 
+If your sign in covers more than one Confluence site, which is normal for anyone supporting
+several customers, Stepwright asks which one and then says so on the publish window every time.
+It never picks for you, because the wrong answer there puts one customer's documentation into
+another customer's site.
+
 To sign in through the browser, register an application once in the Atlassian developer
 console, give it the Confluence permissions, and add `http://localhost:53682/callback` as its
 callback address. Put the identifier and the secret into Settings and press **Sign in to

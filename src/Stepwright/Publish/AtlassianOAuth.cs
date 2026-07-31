@@ -7,6 +7,19 @@ using System.Text.Json.Nodes;
 
 namespace Stepwright.Publish;
 
+/// <summary>One Confluence site the sign in covers.</summary>
+public sealed class AtlassianSite
+{
+    public required string CloudId { get; init; }
+
+    /// <summary>The address a person recognises, for example https://yourcompany.atlassian.net.</summary>
+    public required string Url { get; init; }
+
+    public required string Name { get; init; }
+
+    public override string ToString() => string.IsNullOrEmpty(Url) ? Name : $"{Name}   {Url}";
+}
+
 /// <summary>What a finished sign in leaves behind.</summary>
 public sealed class AtlassianSession
 {
@@ -23,6 +36,13 @@ public sealed class AtlassianSession
     public required string SiteUrl { get; init; }
 
     public required string SiteName { get; init; }
+
+    /// <summary>
+    /// Every site this sign in covers. A person who works for one company sees one. A person
+    /// who supports several customers sees several, and which one they meant is not something
+    /// this app is entitled to guess.
+    /// </summary>
+    public IReadOnlyList<AtlassianSite> Sites { get; init; } = Array.Empty<AtlassianSite>();
 }
 
 /// <summary>
@@ -113,7 +133,7 @@ public static class AtlassianOAuth
                 },
                 token).ConfigureAwait(false);
 
-            return await FinishAsync(granted, string.Empty, token).ConfigureAwait(false);
+            return await FinishAsync(granted, string.Empty, chosen: null, token).ConfigureAwait(false);
         }
         finally
         {
@@ -126,6 +146,7 @@ public static class AtlassianOAuth
         string clientId,
         string clientSecret,
         string refreshToken,
+        string keepCloudId,
         CancellationToken token)
     {
         if (string.IsNullOrWhiteSpace(refreshToken))
@@ -143,13 +164,16 @@ public static class AtlassianOAuth
             },
             token).ConfigureAwait(false);
 
-        // A renewal does not always hand back a new one, so the old one is kept.
-        return await FinishAsync(granted, refreshToken, token).ConfigureAwait(false);
+        // A renewal does not always hand back a new one, so the old one is kept. The site is
+        // kept as well: renewing a sign in is not an invitation to move a person's work to a
+        // different customer.
+        return await FinishAsync(granted, refreshToken, keepCloudId, token).ConfigureAwait(false);
     }
 
     private static async Task<AtlassianSession> FinishAsync(
         JsonNode granted,
         string previousRefresh,
+        string? chosen,
         CancellationToken token)
     {
         string access = granted["access_token"]?.GetValue<string>() ?? string.Empty;
@@ -162,7 +186,11 @@ public static class AtlassianOAuth
         int seconds = granted["expires_in"]?.GetValue<int>() ?? 3600;
         string refresh = granted["refresh_token"]?.GetValue<string>() ?? previousRefresh;
 
-        (string cloudId, string siteUrl, string siteName) = await SiteAsync(access, token).ConfigureAwait(false);
+        IReadOnlyList<AtlassianSite> sites = await SitesAsync(access, token).ConfigureAwait(false);
+
+        // When a site was already chosen it stays chosen. Otherwise the first is only a
+        // starting point: the caller asks the person when there is more than one.
+        AtlassianSite site = sites.FirstOrDefault(s => s.CloudId == chosen) ?? sites[0];
 
         return new AtlassianSession
         {
@@ -171,14 +199,15 @@ public static class AtlassianOAuth
 
             // A minute is taken off so a request cannot start on a token that ends mid flight.
             Expires = DateTimeOffset.UtcNow.AddSeconds(Math.Max(60, seconds - 60)),
-            CloudId = cloudId,
-            SiteUrl = siteUrl,
-            SiteName = siteName,
+            CloudId = site.CloudId,
+            SiteUrl = site.Url,
+            SiteName = site.Name,
+            Sites = sites,
         };
     }
 
-    /// <summary>Which site the token was granted for. The first is the only one for most people.</summary>
-    private static async Task<(string CloudId, string SiteUrl, string SiteName)> SiteAsync(
+    /// <summary>Every site the token was granted for, in the order Atlassian returned them.</summary>
+    public static async Task<IReadOnlyList<AtlassianSite>> SitesAsync(
         string access,
         CancellationToken token)
     {
@@ -204,12 +233,32 @@ public static class AtlassianOAuth
                 "This sign in covers no Confluence site. Check that the application has the Confluence permissions.");
         }
 
-        JsonNode? first = sites[0];
+        var found = new List<AtlassianSite>();
 
-        return (
-            first?["id"]?.GetValue<string>() ?? string.Empty,
-            (first?["url"]?.GetValue<string>() ?? string.Empty).TrimEnd('/'),
-            first?["name"]?.GetValue<string>() ?? "your site");
+        foreach (JsonNode? entry in sites)
+        {
+            string id = entry?["id"]?.GetValue<string>() ?? string.Empty;
+
+            if (id.Length == 0)
+            {
+                continue;
+            }
+
+            found.Add(new AtlassianSite
+            {
+                CloudId = id,
+                Url = (entry?["url"]?.GetValue<string>() ?? string.Empty).TrimEnd('/'),
+                Name = entry?["name"]?.GetValue<string>() ?? "your site",
+            });
+        }
+
+        if (found.Count == 0)
+        {
+            throw new InvalidOperationException(
+                "This sign in covers no Confluence site. Check that the application has the Confluence permissions.");
+        }
+
+        return found;
     }
 
     private static async Task<JsonNode> PostAsync(JsonObject body, CancellationToken token)

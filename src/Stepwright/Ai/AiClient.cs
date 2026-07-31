@@ -297,6 +297,19 @@ public static class AiClient
             .RefreshAsync(settings.AiAppId, settings.AiTenant, scopes, settings.GetAiRefresh(), token)
             .ConfigureAwait(false);
 
+        // A renewal that comes back for a different organisation means the account underneath
+        // has changed. Carrying on would quietly send one customer's work to another customer's
+        // Copilot, so it stops here and says so.
+        if (!string.IsNullOrEmpty(settings.AiTenantId)
+            && !string.IsNullOrEmpty(renewed.TenantId)
+            && !string.Equals(settings.AiTenantId, renewed.TenantId, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                "This sign in now belongs to a different organisation than the one it was set up"
+                + " with. Sign out and sign in again in Settings, so it is clear which account"
+                + " the assistant is using.");
+        }
+
         settings.RememberMicrosoft(renewed);
         settings.Save();
 

@@ -228,7 +228,18 @@ public sealed class PublishForm : Form
             await LoadChildrenAsync().ConfigureAwait(true);
 
             _send.Enabled = true;
-            Say("Ready to send.", Theme.Good);
+
+            // Which place, by name, every time. A person who supports several customers cannot
+            // tell one Confluence from another by the shape of the window.
+            string place = _destination == PublishDestination.Hudu
+                ? _settings.HuduBaseUrl
+                : _settings.ConfluenceUsesOAuth
+                    ? $"{_settings.ConfluenceSiteName} at {_settings.ConfluenceSite}"
+                    : _settings.ConfluenceSite;
+
+            Say(
+                string.IsNullOrWhiteSpace(place) ? "Ready to send." : "Ready to send to " + place + ".",
+                Theme.Good);
         }
         catch (Exception error)
         {

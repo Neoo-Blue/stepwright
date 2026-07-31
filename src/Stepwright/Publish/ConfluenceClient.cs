@@ -95,6 +95,7 @@ public sealed class ConfluenceClient
                 settings.ConfluenceClientId,
                 settings.GetConfluenceSecret(),
                 settings.GetConfluenceRefresh(),
+                settings.ConfluenceCloudId,
                 token).ConfigureAwait(false);
 
             settings.RememberConfluence(renewed);

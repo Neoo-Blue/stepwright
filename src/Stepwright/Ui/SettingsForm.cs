@@ -584,7 +584,10 @@ public sealed class SettingsForm : Form
     {
         _aiSignedIn.ForeColor = _settings.HasMicrosoftSignIn ? Theme.Good : Theme.Muted;
         _aiSignedIn.Text = _settings.HasMicrosoftSignIn
-            ? "Signed in. Stepwright renews this on its own."
+            ? "Signed in"
+              + (string.IsNullOrWhiteSpace(_settings.AiAccount) ? string.Empty : " as " + _settings.AiAccount)
+              + ". Stepwright renews this on its own, and refuses to carry on if the account"
+              + " later belongs to a different organisation."
             : "Not signed in yet.";
     }
 
@@ -1004,7 +1007,8 @@ public sealed class SettingsForm : Form
     {
         _confluenceSignedIn.ForeColor = _settings.HasConfluenceSignIn ? Theme.Good : Theme.Muted;
         _confluenceSignedIn.Text = _settings.HasConfluenceSignIn
-            ? $"Signed in to {_settings.ConfluenceSiteName}. Stepwright renews this on its own."
+            ? $"Signed in to {_settings.ConfluenceSiteName} at {_settings.ConfluenceSite}."
+              + " Everything published goes there until you sign in somewhere else."
             : "Not signed in yet.";
     }
 
@@ -1028,6 +1032,32 @@ public sealed class SettingsForm : Form
                     message => _confluenceResult.Text = message,
                     cancel.Token)
                 .ConfigureAwait(true);
+
+            // A person who supports several customers is signed in to several Confluence sites,
+            // and guessing which one they meant would publish one customer's work into another
+            // customer's space. So they are asked, every time there is a choice to make.
+            if (session.Sites.Count > 1)
+            {
+                AtlassianSite? picked = ChooseSite(session.Sites);
+
+                if (picked is null)
+                {
+                    _confluenceResult.ForeColor = Theme.Muted;
+                    _confluenceResult.Text = "Signed in, but no site was chosen, so nothing was saved.";
+                    return;
+                }
+
+                session = new AtlassianSession
+                {
+                    AccessToken = session.AccessToken,
+                    RefreshToken = session.RefreshToken,
+                    Expires = session.Expires,
+                    CloudId = picked.CloudId,
+                    SiteUrl = picked.Url,
+                    SiteName = picked.Name,
+                    Sites = session.Sites,
+                };
+            }
 
             // Saved straight away, because a sign in that is lost by pressing Cancel is worse
             // than one that is kept by mistake.
@@ -1053,6 +1083,86 @@ public sealed class SettingsForm : Form
             _confluenceResult.ForeColor = Theme.Record;
             _confluenceResult.Text = StepwrightText.Shorten(error.Message, 200);
         }
+    }
+
+    /// <summary>
+    /// Asks which Confluence site the person meant. Deliberately a blocking question with no
+    /// default: the wrong answer here writes one customer's documentation into another
+    /// customer's site, which is not the kind of mistake a guess should be allowed to make.
+    /// </summary>
+    private AtlassianSite? ChooseSite(IReadOnlyList<AtlassianSite> sites)
+    {
+        using var dialog = new Form
+        {
+            Text = "Which Confluence site?",
+            FormBorderStyle = FormBorderStyle.FixedDialog,
+            StartPosition = FormStartPosition.CenterParent,
+            ClientSize = new Size(460, 230),
+            MinimizeBox = false,
+            MaximizeBox = false,
+            BackColor = Theme.Window,
+            ForeColor = Theme.Text,
+            Font = Theme.Ui,
+        };
+
+        var caption = new Label
+        {
+            Text = "This sign in covers more than one site. Choose the one to publish into.",
+            AutoSize = false,
+            Dock = DockStyle.Top,
+            Height = 40,
+            ForeColor = Theme.Muted,
+            Padding = new Padding(2, 6, 2, 0),
+        };
+
+        var list = new ListBox
+        {
+            Dock = DockStyle.Fill,
+            IntegralHeight = false,
+            BackColor = Theme.Panel,
+            ForeColor = Theme.Text,
+        };
+
+        foreach (AtlassianSite site in sites)
+        {
+            list.Items.Add(site);
+        }
+
+        list.SelectedIndex = 0;
+
+        var buttons = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Bottom,
+            FlowDirection = FlowDirection.RightToLeft,
+            Height = 46,
+            Padding = new Padding(0, 8, 0, 0),
+            BackColor = Color.Transparent,
+        };
+
+        var choose = new Button { Text = "Use this site", AutoSize = true, MinimumSize = new Size(110, 30) };
+        var cancel = new Button { Text = "Cancel", AutoSize = true, MinimumSize = new Size(90, 30) };
+
+        Theme.StyleButton(choose, primary: true);
+        Theme.StyleButton(cancel);
+
+        choose.Click += (_, _) => dialog.DialogResult = DialogResult.OK;
+        cancel.Click += (_, _) => dialog.DialogResult = DialogResult.Cancel;
+        list.DoubleClick += (_, _) => dialog.DialogResult = DialogResult.OK;
+
+        buttons.Controls.Add(choose);
+        buttons.Controls.Add(cancel);
+
+        dialog.Controls.Add(list);
+        dialog.Controls.Add(caption);
+        dialog.Controls.Add(buttons);
+        dialog.AcceptButton = choose;
+        dialog.CancelButton = cancel;
+
+        Theme.Apply(dialog);
+
+        return dialog.ShowDialog(this) == DialogResult.OK && list.SelectedItem is AtlassianSite chosen
+            ? chosen
+            : null;
     }
 
     private void SignOutConfluence()
