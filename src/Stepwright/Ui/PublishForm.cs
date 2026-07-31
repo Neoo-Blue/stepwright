@@ -318,7 +318,9 @@ public sealed class PublishForm : Form
 
             if (_destination == PublishDestination.Hudu && _hudu is not null)
             {
-                Say("Sending to Hudu...", Theme.Muted);
+                // Named out loud, because one Hudu key reaches every company on the instance
+                // and the only thing standing between customers is this list.
+                Say($"Sending to {Selected(_first)?.Name ?? "Hudu"} at {_settings.HuduBaseUrl}...", Theme.Muted);
 
                 _link = await _hudu.PublishAsync(
                     title,
@@ -340,6 +342,10 @@ public sealed class PublishForm : Form
                     return;
                 }
 
+                Say(
+                    $"Sending to {Selected(_first)?.Name ?? "Confluence"} at {_settings.ConfluenceSite}...",
+                    Theme.Muted);
+
                 var progress = new Progress<string>(message => Say(message, Theme.Muted));
 
                 _link = await _confluence.PublishAsync(
@@ -356,7 +362,12 @@ public sealed class PublishForm : Form
             }
 
             _settings.Save();
-            Say("Sent. " + _link, Theme.Good);
+
+            string went = _destination == PublishDestination.Hudu
+                ? $"{Selected(_first)?.Name} at {_settings.HuduBaseUrl}"
+                : $"{Selected(_first)?.Name} at {_settings.ConfluenceSite}";
+
+            Say($"Sent to {went}. {_link}", Theme.Good);
 
             if (MessageBox.Show(
                     this,

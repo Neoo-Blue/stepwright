@@ -871,6 +871,13 @@ public sealed class SettingsForm : Form
         _huduKey.TextChanged += (_, _) => _huduKeyEdited = true;
         AddField(table, "API key, from Admin then API in Hudu", _huduKey);
 
+        AddNote(
+            table,
+            "A Hudu key reaches every company on the instance, not only the one you are working"
+            + " on, so treat it as you would an administrator password. The company a guide goes"
+            + " to is the one chosen on the publishing window, and it is named there before"
+            + " anything is sent.");
+
         var huduRow = new FlowLayoutPanel
         {
             AutoSize = true,
