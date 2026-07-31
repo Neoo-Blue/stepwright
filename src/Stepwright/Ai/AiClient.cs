@@ -56,6 +56,20 @@ public static class AiClient
                 .ConfigureAwait(false);
         }
 
+        // A sign in made in this app. Claude reaches the ordinary address with a signed in token,
+        // but ChatGPT and Gemini can only be reached through their own command line backends,
+        // each with a shape of its own, so those two are handled apart before anything generic.
+        if (auth == AiAuthKinds.Subscription)
+        {
+            switch (provider)
+            {
+                case AiProviders.OpenAi:
+                    return await ChatGptSubscriptionAsync(settings, system, user, token).ConfigureAwait(false);
+                case AiProviders.Gemini:
+                    return await GeminiSubscriptionAsync(settings, system, user, token).ConfigureAwait(false);
+            }
+        }
+
         bool subscriptionToken = auth is AiAuthKinds.Token or AiAuthKinds.Subscription;
 
         string key = auth == AiAuthKinds.Subscription
@@ -321,6 +335,370 @@ public static class AiClient
         settings.Save();
 
         return renewed.AccessToken;
+    }
+
+    // ------------------------------------------------------------------ ChatGPT subscription
+
+    /// <summary>
+    /// One question to a signed in ChatGPT subscription. There is no ordinary API address for a
+    /// subscription, so this speaks to the same backend the Codex app speaks to, in the shape it
+    /// expects: a Responses request that must stream and must not be stored, carrying the
+    /// workspace the sign in belongs to. The answer is streamed back and assembled here.
+    /// </summary>
+    private static async Task<string> ChatGptSubscriptionAsync(
+        AppSettings settings,
+        string system,
+        string user,
+        CancellationToken token)
+    {
+        ChatGptSession session = await ChatGptTokenAsync(settings, token).ConfigureAwait(false);
+
+        var body = new JsonObject
+        {
+            ["model"] = Model(settings.AiModel, "gpt-5.1"),
+            ["instructions"] = "You are a ChatGPT agent.",
+            ["stream"] = true,
+            ["store"] = false,
+            ["input"] = new JsonArray
+            {
+                Turn("developer", system),
+                Turn("user", user),
+            },
+        };
+
+        using var request = new HttpRequestMessage(
+            HttpMethod.Post,
+            "https://chatgpt.com/backend-api/codex/responses")
+        {
+            Content = Json(body),
+        };
+
+        request.Headers.TryAddWithoutValidation("Authorization", "Bearer " + session.AccessToken);
+        request.Headers.TryAddWithoutValidation("chatgpt-account-id", session.Workspace);
+        request.Headers.TryAddWithoutValidation("originator", "codex_cli_rs");
+        request.Headers.TryAddWithoutValidation("OpenAI-Beta", "responses=experimental");
+        request.Headers.TryAddWithoutValidation("Accept", "text/event-stream");
+        request.Headers.TryAddWithoutValidation("User-Agent", "codex-cli/0.144.1 (external, cli)");
+
+        using HttpResponseMessage response = await Http
+            .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token)
+            .ConfigureAwait(false);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            string failed = await response.Content.ReadAsStringAsync(token).ConfigureAwait(false);
+            throw new InvalidOperationException(ChatGptTrouble(response.StatusCode, failed));
+        }
+
+        return await ReadResponsesStreamAsync(response, token).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Reads the Responses stream and hands back the finished answer. The deltas are collected as
+    /// they arrive, and the completed event is used as a fallback in case nothing was streamed.
+    /// </summary>
+    private static async Task<string> ReadResponsesStreamAsync(HttpResponseMessage response, CancellationToken token)
+    {
+        await using Stream stream = await response.Content.ReadAsStreamAsync(token).ConfigureAwait(false);
+        using var reader = new StreamReader(stream);
+
+        var answer = new StringBuilder();
+        string fallback = string.Empty;
+
+        while (await reader.ReadLineAsync(token).ConfigureAwait(false) is string line)
+        {
+            if (!line.StartsWith("data:", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            string data = line[5..].Trim();
+
+            if (data.Length == 0 || data == "[DONE]")
+            {
+                continue;
+            }
+
+            JsonNode? node;
+
+            try
+            {
+                node = JsonNode.Parse(data);
+            }
+            catch (JsonException)
+            {
+                continue;
+            }
+
+            string type = node?["type"]?.GetValue<string>() ?? string.Empty;
+
+            switch (type)
+            {
+                case "response.output_text.delta":
+                    answer.Append(node?["delta"]?.GetValue<string>() ?? string.Empty);
+                    break;
+
+                case "response.completed":
+                    fallback = OutputText(node?["response"]);
+                    break;
+
+                case "response.failed":
+                    string why = node?["response"]?["error"]?["message"]?.GetValue<string>()
+                        ?? "ChatGPT stopped before it finished.";
+                    throw new InvalidOperationException(why);
+            }
+        }
+
+        string text = answer.ToString().Trim();
+
+        if (text.Length > 0)
+        {
+            return text;
+        }
+
+        return fallback.Trim().Length > 0
+            ? fallback.Trim()
+            : throw new InvalidOperationException("ChatGPT finished but said nothing. Try again.");
+    }
+
+    /// <summary>Pulls the assembled text out of a completed Responses object.</summary>
+    private static string OutputText(JsonNode? response)
+    {
+        if (response?["output"] is not JsonArray output)
+        {
+            return string.Empty;
+        }
+
+        var text = new StringBuilder();
+
+        foreach (JsonNode? item in output)
+        {
+            if (item?["content"] is not JsonArray content)
+            {
+                continue;
+            }
+
+            foreach (JsonNode? part in content)
+            {
+                if (part?["type"]?.GetValue<string>() is "output_text" or "text")
+                {
+                    text.Append(part?["text"]?.GetValue<string>() ?? string.Empty);
+                }
+            }
+        }
+
+        return text.ToString();
+    }
+
+    private static JsonObject Turn(string role, string text) => new()
+    {
+        ["type"] = "message",
+        ["role"] = role,
+        ["content"] = new JsonArray { new JsonObject { ["type"] = "input_text", ["text"] = text } },
+    };
+
+    private static string ChatGptTrouble(System.Net.HttpStatusCode code, string body)
+    {
+        string described = Describe(body);
+
+        return (int)code switch
+        {
+            401 or 403 =>
+                "ChatGPT would not accept this sign in. It may have expired, or this plan may not"
+                + " cover the assistant. Sign in again in Settings. " + described,
+            429 =>
+                "ChatGPT is rate limiting this plan right now. Wait a little and try again. " + described,
+            _ => "ChatGPT could not answer. " + described,
+        };
+    }
+
+    private static async Task<ChatGptSession> LoadChatGptAsync(AppSettings settings)
+    {
+        await Task.CompletedTask.ConfigureAwait(false);
+
+        return new ChatGptSession
+        {
+            AccessToken = settings.GetAiAccess(),
+            RefreshToken = settings.GetAiRefresh(),
+            Expires = settings.AiAccessExpires,
+            Workspace = settings.AiWorkspace,
+            Plan = settings.AiPlan,
+            Account = settings.AiAccount,
+        };
+    }
+
+    private static async Task<ChatGptSession> ChatGptTokenAsync(AppSettings settings, CancellationToken token)
+    {
+        if (!settings.HasSubscriptionSignIn)
+        {
+            throw new InvalidOperationException("Sign in to your ChatGPT subscription in Settings first.");
+        }
+
+        ChatGptSession session = await LoadChatGptAsync(settings).ConfigureAwait(false);
+
+        if (!string.IsNullOrEmpty(session.AccessToken) && session.Expires > DateTimeOffset.UtcNow)
+        {
+            return session;
+        }
+
+        ChatGptSession renewed = await ChatGptOAuth.RenewAsync(session, token).ConfigureAwait(false);
+
+        settings.RememberChatGpt(renewed);
+        settings.Save();
+
+        return renewed;
+    }
+
+    // ------------------------------------------------------------------ Gemini subscription
+
+    /// <summary>
+    /// One question to a signed in Gemini plan. Like ChatGPT there is no ordinary API address for
+    /// a plan, so this speaks to the Code Assist service the Gemini app uses, naming the project
+    /// the plan bills against. The whole answer comes back in one reply here rather than streamed.
+    /// </summary>
+    private static async Task<string> GeminiSubscriptionAsync(
+        AppSettings settings,
+        string system,
+        string user,
+        CancellationToken token)
+    {
+        GeminiSession session = await GeminiTokenAsync(settings, token).ConfigureAwait(false);
+        string model = Model(settings.AiModel, "gemini-2.5-pro");
+
+        var body = new JsonObject
+        {
+            ["model"] = model,
+            ["project"] = session.Project,
+            ["user_prompt_id"] = Guid.NewGuid().ToString("n"),
+            ["request"] = new JsonObject
+            {
+                ["contents"] = new JsonArray
+                {
+                    new JsonObject
+                    {
+                        ["role"] = "user",
+                        ["parts"] = new JsonArray { new JsonObject { ["text"] = user } },
+                    },
+                },
+                ["systemInstruction"] = new JsonObject
+                {
+                    ["role"] = "user",
+                    ["parts"] = new JsonArray { new JsonObject { ["text"] = system } },
+                },
+            },
+        };
+
+        using var request = new HttpRequestMessage(
+            HttpMethod.Post,
+            "https://cloudcode-pa.googleapis.com/v1internal:generateContent")
+        {
+            Content = Json(body),
+        };
+
+        GeminiOAuth.Sign(request, session.AccessToken);
+
+        using HttpResponseMessage response = await Http.SendAsync(request, token).ConfigureAwait(false);
+        string text = await response.Content.ReadAsStringAsync(token).ConfigureAwait(false);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new InvalidOperationException(GeminiTrouble(response.StatusCode, text));
+        }
+
+        JsonNode? node = JsonNode.Parse(text);
+        string answer = GeminiText(node?["response"] ?? node);
+
+        return answer.Trim().Length > 0
+            ? answer.Trim()
+            : throw new InvalidOperationException("Gemini finished but said nothing. Try again.");
+    }
+
+    /// <summary>
+    /// The answer text out of a Code Assist reply. Every part that is a real answer is kept and
+    /// joined, and the parts the model marks as its own thinking are left out, because a thought
+    /// is not the answer and pasting the first part alone would sometimes hand back the thinking.
+    /// </summary>
+    private static string GeminiText(JsonNode? response)
+    {
+        if (response?["candidates"] is not JsonArray candidates || candidates.Count == 0)
+        {
+            return string.Empty;
+        }
+
+        if (candidates[0]?["content"]?["parts"] is not JsonArray parts)
+        {
+            return string.Empty;
+        }
+
+        var text = new StringBuilder();
+
+        foreach (JsonNode? part in parts)
+        {
+            bool thought = part?["thought"]?.GetValue<bool>() ?? false;
+
+            if (thought)
+            {
+                continue;
+            }
+
+            if (part?["text"]?.GetValue<string>() is string piece)
+            {
+                text.Append(piece);
+            }
+        }
+
+        return text.ToString();
+    }
+
+    private static string GeminiTrouble(System.Net.HttpStatusCode code, string body)
+    {
+        string described = Describe(body);
+
+        return (int)code switch
+        {
+            401 or 403 =>
+                "Google would not accept this sign in. It may have expired, or this account may not"
+                + " be entitled to Gemini Code Assist. Sign in again in Settings. " + described,
+            429 =>
+                "This Gemini plan is out of quota for now. Wait and try again. " + described,
+            _ => "Gemini could not answer. " + described,
+        };
+    }
+
+    private static async Task<GeminiSession> GeminiTokenAsync(AppSettings settings, CancellationToken token)
+    {
+        if (!settings.HasSubscriptionSignIn)
+        {
+            throw new InvalidOperationException("Sign in to your Gemini plan in Settings first.");
+        }
+
+        var session = new GeminiSession
+        {
+            AccessToken = settings.GetAiAccess(),
+            RefreshToken = settings.GetAiRefresh(),
+            Expires = settings.AiAccessExpires,
+            Project = settings.AiProject,
+            Plan = settings.AiPlan,
+            Account = settings.AiAccount,
+        };
+
+        if (!string.IsNullOrEmpty(session.AccessToken) && session.Expires > DateTimeOffset.UtcNow)
+        {
+            return session;
+        }
+
+        GeminiSession renewed = await GeminiOAuth.RenewAsync(session, token).ConfigureAwait(false);
+
+        settings.RememberGemini(renewed);
+        settings.Save();
+
+        return renewed;
+    }
+
+    private static string Model(string? chosen, string fallback)
+    {
+        string name = (chosen ?? string.Empty).Trim();
+        return name.Length > 0 ? name : fallback;
     }
 
     // ------------------------------------------------------------------ Microsoft shapes
@@ -626,6 +1004,18 @@ public static class AiClient
             return agent is null
                 ? Array.Empty<string>()
                 : agent.Models.Where(m => m.Length > 0).ToList();
+        }
+
+        // The ChatGPT and Gemini subscription backends have no models list to ask, and asking
+        // their own way would spend a real request, so the names they answer to are offered.
+        if (auth == AiAuthKinds.Subscription && provider == AiProviders.OpenAi)
+        {
+            return new[] { "gpt-5.1", "gpt-5.1-codex", "gpt-5" };
+        }
+
+        if (auth == AiAuthKinds.Subscription && provider == AiProviders.Gemini)
+        {
+            return new[] { "gemini-2.5-pro", "gemini-2.5-flash" };
         }
 
         bool subscriptionToken = auth is AiAuthKinds.Token or AiAuthKinds.Subscription;

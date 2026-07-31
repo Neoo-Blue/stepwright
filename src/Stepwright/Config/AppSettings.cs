@@ -87,6 +87,15 @@ public sealed class AppSettings
     public string AiTenantId { get; set; } = string.Empty;
     public string AiAccount { get; set; } = string.Empty;
 
+    /// <summary>The ChatGPT workspace a subscription sign in belongs to, sent on every request.</summary>
+    public string AiWorkspace { get; set; } = string.Empty;
+
+    /// <summary>The Cloud project a Gemini plan bills against, discovered once after sign in.</summary>
+    public string AiProject { get; set; } = string.Empty;
+
+    /// <summary>Which plan or tier is paying, kept only so the settings page can name it.</summary>
+    public string AiPlan { get; set; } = string.Empty;
+
     /// <summary>
     /// Lets the assistant look at the screenshot for each step, which is what makes it able
     /// to name what is actually on screen. Off by default, because pictures leaving the
@@ -279,10 +288,59 @@ public sealed class AppSettings
         }
     }
 
-    public void ForgetClaude() => ForgetMicrosoft();
+    public void ForgetClaude() => ForgetSubscription();
 
     [JsonIgnore]
     public bool HasClaudeSignIn => !string.IsNullOrEmpty(AiRefreshProtected);
+
+    /// <summary>
+    /// Keeps what a finished ChatGPT sign in handed back. It shares the same fields as the other
+    /// sign ins, because the assistant is signed in to one service at a time.
+    /// </summary>
+    public void RememberChatGpt(Ai.ChatGptSession session)
+    {
+        AiAccessProtected = Protect(session.AccessToken);
+        AiRefreshProtected = Protect(session.RefreshToken);
+        AiAccessExpires = session.Expires;
+        AiWorkspace = session.Workspace;
+        AiPlan = session.Plan;
+
+        if (!string.IsNullOrWhiteSpace(session.Account))
+        {
+            AiAccount = session.Account;
+        }
+    }
+
+    /// <summary>Keeps what a finished Gemini sign in handed back.</summary>
+    public void RememberGemini(Ai.GeminiSession session)
+    {
+        AiAccessProtected = Protect(session.AccessToken);
+        AiRefreshProtected = Protect(session.RefreshToken);
+        AiAccessExpires = session.Expires;
+        AiProject = session.Project;
+        AiPlan = session.Plan;
+
+        if (!string.IsNullOrWhiteSpace(session.Account))
+        {
+            AiAccount = session.Account;
+        }
+    }
+
+    /// <summary>Clears whatever native sign in is held. There is only ever one.</summary>
+    public void ForgetSubscription()
+    {
+        AiAccessProtected = string.Empty;
+        AiRefreshProtected = string.Empty;
+        AiAccessExpires = default;
+        AiAccount = string.Empty;
+        AiWorkspace = string.Empty;
+        AiProject = string.Empty;
+        AiPlan = string.Empty;
+    }
+
+    /// <summary>True when a native subscription sign in is held, whichever service it is for.</summary>
+    [JsonIgnore]
+    public bool HasSubscriptionSignIn => !string.IsNullOrEmpty(AiRefreshProtected);
 
     public void SetHuduKey(string plainKey) => HuduKeyProtected = Protect(plainKey);
 

@@ -55,6 +55,7 @@ public sealed class SettingsForm : Form
     private readonly TextBox _aiTenant = new();
     private readonly Label _aiSignedIn = new();
     private readonly Label _aiClaudeSignedIn = new();
+    private readonly Label _aiSubscriptionNote = new();
     private readonly Label _aiBrowserSignedIn = new();
     private readonly ComboBox _aiCopilotKind = new() { DropDownStyle = ComboBoxStyle.DropDownList };
     private readonly Label _aiModelNote = new();
@@ -491,12 +492,13 @@ public sealed class SettingsForm : Form
     /// </summary>
     private void BuildSubscriptionGroup()
     {
-        AddNote(
-            _aiSubscriptionGroup,
-            "Press sign in, sign in to Claude in the browser as you normally would, then paste"
-            + " back the line it shows you. That is the whole setup. There is nothing to install"
-            + " and nothing to register, and the work is paid for by the Claude plan you already"
-            + " have rather than by the token.");
+        _aiSubscriptionNote.AutoSize = true;
+        _aiSubscriptionNote.MaximumSize = new Size(580, 0);
+        _aiSubscriptionNote.ForeColor = Theme.Muted;
+        _aiSubscriptionNote.Font = Theme.UiSmall;
+        _aiSubscriptionNote.Margin = new Padding(1, 0, 0, 10);
+        _aiSubscriptionNote.BackColor = Color.Transparent;
+        _aiSubscriptionGroup.Controls.Add(_aiSubscriptionNote);
 
         var row = new FlowLayoutPanel
         {
@@ -508,9 +510,9 @@ public sealed class SettingsForm : Form
             WrapContents = false,
         };
 
-        row.Controls.Add(Action("Sign in with Claude", async () => await SignInClaudeAsync().ConfigureAwait(true)));
-        row.Controls.Add(Action("Sign out", SignOutClaude));
-        row.Controls.Add(Action("See the plans", () => Open(ClaudeOAuth.PlansPage)));
+        row.Controls.Add(Action("Sign in", async () => await SignInSubscriptionAsync().ConfigureAwait(true)));
+        row.Controls.Add(Action("Sign out", SignOutSubscription));
+        row.Controls.Add(Action("See the plans", OpenSubscriptionPlans));
 
         _aiSubscriptionGroup.Controls.Add(row);
 
@@ -522,24 +524,77 @@ public sealed class SettingsForm : Form
         _aiClaudeSignedIn.BackColor = Color.Transparent;
         _aiSubscriptionGroup.Controls.Add(_aiClaudeSignedIn);
 
-        ShowClaudeSignIn();
+        ShowSubscriptionSignIn();
     }
 
-    private void ShowClaudeSignIn()
+    /// <summary>The service the subscription route currently points at, by the chosen provider.</summary>
+    private string SubscriptionService => SelectedProvider.Id switch
     {
-        _aiClaudeSignedIn.ForeColor = _settings.HasClaudeSignIn ? Theme.Good : Theme.Muted;
-        _aiClaudeSignedIn.Text = _settings.HasClaudeSignIn
+        AiProviders.OpenAi => "ChatGPT",
+        AiProviders.Gemini => "Gemini",
+        _ => "Claude",
+    };
+
+    private void ShowSubscriptionSignIn()
+    {
+        string service = SubscriptionService;
+
+        _aiSubscriptionNote.Text = service == "Claude"
+            ? "Press sign in, sign in to Claude in the browser as you normally would, then paste"
+              + " back the line it shows you. That is the whole setup. There is nothing to install,"
+              + " and the work is paid for by the Claude plan you already have."
+            : "Press sign in and sign in to " + service + " in the browser. Read the caution below"
+              + " first: this reaches a consumer subscription the way the vendor's own command line"
+              + " app does, which is outside the terms of a personal plan. The plainly sanctioned"
+              + " route is that app, signed in, which Stepwright can also drive.";
+
+        bool has = _settings.HasSubscriptionSignIn;
+
+        _aiClaudeSignedIn.ForeColor = has ? Theme.Good : Theme.Muted;
+        _aiClaudeSignedIn.Text = has
             ? "Signed in"
               + (string.IsNullOrWhiteSpace(_settings.AiAccount) ? string.Empty : " as " + _settings.AiAccount)
+              + (string.IsNullOrWhiteSpace(_settings.AiPlan) ? string.Empty : " on the " + _settings.AiPlan + " plan")
               + ". Stepwright keeps this signed in on its own from now on."
             : "Not signed in yet.";
     }
 
+    private void OpenSubscriptionPlans() => Open(SelectedProvider.Id switch
+    {
+        AiProviders.OpenAi => ChatGptOAuth.PlansPage,
+        AiProviders.Gemini => GeminiOAuth.PlansPage,
+        _ => ClaudeOAuth.PlansPage,
+    });
+
     /// <summary>
-    /// The sign in itself. The proof key is held here for as long as the person is pasting, and
-    /// a code without it is worth nothing, which is what makes this safe in an app that anybody
-    /// can download and read.
+    /// The sign in itself, for whichever service the provider points at. Claude shows a code on a
+    /// page to paste back; ChatGPT and Gemini come back to a door on this machine, so there is
+    /// nothing to paste for those two.
     /// </summary>
+    private async Task SignInSubscriptionAsync()
+    {
+        try
+        {
+            switch (SelectedProvider.Id)
+            {
+                case AiProviders.OpenAi:
+                    await SignInChatGptAsync().ConfigureAwait(true);
+                    break;
+                case AiProviders.Gemini:
+                    await SignInGeminiAsync().ConfigureAwait(true);
+                    break;
+                default:
+                    await SignInClaudeAsync().ConfigureAwait(true);
+                    break;
+            }
+        }
+        catch (Exception error)
+        {
+            _aiResult.ForeColor = Theme.Record;
+            _aiResult.Text = StepwrightText.Shorten(error.Message, 220);
+        }
+    }
+
     private async Task SignInClaudeAsync()
     {
         ClaudeOAuth.Attempt attempt = ClaudeOAuth.Begin();
@@ -561,38 +616,70 @@ public sealed class SettingsForm : Form
         _aiResult.ForeColor = Theme.Muted;
         _aiResult.Text = "Finishing the sign in...";
 
-        try
-        {
-            using var cancel = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+        using var cancel = new CancellationTokenSource(TimeSpan.FromMinutes(2));
 
-            ClaudeSession session = await ClaudeOAuth
-                .FinishAsync(attempt, pasted, cancel.Token)
-                .ConfigureAwait(true);
+        ClaudeSession session = await ClaudeOAuth
+            .FinishAsync(attempt, pasted, cancel.Token)
+            .ConfigureAwait(true);
 
-            _settings.AiAuth = AiAuthKinds.Subscription;
-            _settings.AiProvider = AiProviders.Anthropic;
-            _settings.AiBaseUrl = AiProviders.Find(AiProviders.Anthropic).BaseUrl;
-            _settings.RememberClaude(session);
-            _settings.Save();
+        _settings.AiAuth = AiAuthKinds.Subscription;
+        _settings.AiProvider = AiProviders.Anthropic;
+        _settings.AiBaseUrl = AiProviders.Find(AiProviders.Anthropic).BaseUrl;
+        _settings.RememberClaude(session);
+        _settings.Save();
 
-            _aiBaseUrl.Text = _settings.AiBaseUrl;
-            ShowClaudeSignIn();
+        _aiBaseUrl.Text = _settings.AiBaseUrl;
+        ShowSubscriptionSignIn();
 
-            _aiResult.ForeColor = Theme.Good;
-            _aiResult.Text = "Signed in. Test the connection to prove it works.";
-        }
-        catch (Exception error)
-        {
-            _aiResult.ForeColor = Theme.Record;
-            _aiResult.Text = StepwrightText.Shorten(error.Message, 220);
-        }
+        _aiResult.ForeColor = Theme.Good;
+        _aiResult.Text = "Signed in. Test the connection to prove it works.";
     }
 
-    private void SignOutClaude()
+    private async Task SignInChatGptAsync()
     {
-        _settings.ForgetClaude();
+        _aiResult.ForeColor = Theme.Muted;
+        _aiResult.Text = "Opening the ChatGPT sign in...";
+
+        using var cancel = new CancellationTokenSource(TimeSpan.FromMinutes(6));
+
+        ChatGptSession session = await ChatGptOAuth.SignInAsync(Open, cancel.Token).ConfigureAwait(true);
+
+        _settings.AiAuth = AiAuthKinds.Subscription;
+        _settings.AiProvider = AiProviders.OpenAi;
+        _settings.RememberChatGpt(session);
         _settings.Save();
-        ShowClaudeSignIn();
+
+        ShowSubscriptionSignIn();
+
+        _aiResult.ForeColor = Theme.Good;
+        _aiResult.Text = "Signed in. Test the connection to prove it works.";
+    }
+
+    private async Task SignInGeminiAsync()
+    {
+        _aiResult.ForeColor = Theme.Muted;
+        _aiResult.Text = "Opening the Google sign in...";
+
+        using var cancel = new CancellationTokenSource(TimeSpan.FromMinutes(6));
+
+        GeminiSession session = await GeminiOAuth.SignInAsync(Open, cancel.Token).ConfigureAwait(true);
+
+        _settings.AiAuth = AiAuthKinds.Subscription;
+        _settings.AiProvider = AiProviders.Gemini;
+        _settings.RememberGemini(session);
+        _settings.Save();
+
+        ShowSubscriptionSignIn();
+
+        _aiResult.ForeColor = Theme.Good;
+        _aiResult.Text = "Signed in. Test the connection to prove it works.";
+    }
+
+    private void SignOutSubscription()
+    {
+        _settings.ForgetSubscription();
+        _settings.Save();
+        ShowSubscriptionSignIn();
 
         _aiResult.ForeColor = Theme.Muted;
         _aiResult.Text = "Signed out.";
@@ -995,11 +1082,23 @@ public sealed class SettingsForm : Form
         }
 
         // Signing in here is offered before the routes that need something installed, because
-        // it is the one that asks the least of the person.
+        // it is the one that asks the least of the person. Claude reaches the ordinary address
+        // and is the clean case; ChatGPT and Gemini reach a consumer subscription the vendor's
+        // own way, so they say advanced.
         if (SelectedProvider.Id == AiProviders.Anthropic)
         {
             _authKinds.Add(AiAuthKinds.Subscription);
             _aiAuth.Items.Add("Sign in with my Claude subscription");
+        }
+        else if (SelectedProvider.Id == AiProviders.OpenAi)
+        {
+            _authKinds.Add(AiAuthKinds.Subscription);
+            _aiAuth.Items.Add("Sign in with my ChatGPT subscription, advanced");
+        }
+        else if (SelectedProvider.Id == AiProviders.Gemini && GeminiOAuth.Available)
+        {
+            _authKinds.Add(AiAuthKinds.Subscription);
+            _aiAuth.Items.Add("Sign in with my Gemini plan, advanced");
         }
 
         AiAgent? agent = AiAgents.Find(SelectedProvider.Id);
@@ -1072,9 +1171,17 @@ public sealed class SettingsForm : Form
             _aiModelNote.Text = "Find models asks the service which ones your key is allowed to use.";
         }
 
-        if (auth is AiAuthKinds.Token or AiAuthKinds.Subscription)
+        // Claude's routes reach the ordinary Anthropic address; the ChatGPT and Gemini
+        // subscription routes reach their own backends and ignore this box entirely.
+        if (auth == AiAuthKinds.Token
+            || (auth == AiAuthKinds.Subscription && SelectedProvider.Id == AiProviders.Anthropic))
         {
             _aiBaseUrl.Text = AiProviders.Find(AiProviders.Anthropic).BaseUrl;
+        }
+
+        if (auth == AiAuthKinds.Subscription)
+        {
+            ShowSubscriptionSignIn();
         }
     }
 

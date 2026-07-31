@@ -94,10 +94,13 @@ public static class CopilotWeb
         {
             await Session.GoAsync(work ? WorkPage : PersonalPage, token).ConfigureAwait(true);
 
-            if (Session.Address.Contains("login.", StringComparison.OrdinalIgnoreCase))
+            // If the page has bounced to a sign in, stop here. Carrying on would type the question
+            // into whatever box the sign in page happens to have and read something back that is
+            // not an answer, which is worse than a plain failure.
+            if (!Landed(Session.Address, work))
             {
                 throw new InvalidOperationException(
-                    "Copilot is asking to be signed in to again. Open Settings and sign in.");
+                    "Copilot is asking to be signed in to again. Open Settings and sign in to Copilot.");
             }
 
             JsonNode? answered = await Session

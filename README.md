@@ -211,6 +211,20 @@ for your Windows account with the platform data protection interface.
 Press **Find models** and Stepwright asks that service which models your key is actually allowed
 to use, then fills the list. You can still type a name yourself.
 
+### Signing in with a subscription you already pay for
+
+The assistant can sign in to a Claude, ChatGPT or Gemini subscription from inside Stepwright, with
+no command line app to install. Press sign in, sign in in the browser, and it keeps itself signed
+in from then on.
+
+Claude is the clean one: it reaches Anthropic's ordinary address with a signed in token, the way
+its own command line app does. ChatGPT and Gemini are marked advanced on purpose. There is no
+ordinary API address for a consumer subscription, so those two reach the same backend the vendor's
+own command line app uses, which is outside the terms of a personal plan and can break when the
+vendor changes that backend. The plainly sanctioned way to spend a ChatGPT or Gemini subscription
+is the command line app, signed in, which Stepwright can also drive. The sign in is offered for the
+person who has read that and wants it anyway; everyone else should use a key or that app.
+
 ### Signing in instead of setting up
 
 Three of the connections now start with a sign in and nothing else.

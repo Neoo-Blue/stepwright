@@ -29,9 +29,23 @@ public static class Connect
     /// </summary>
     public const string AtlassianBroker = "";
 
+    /// <summary>
+    /// The Gemini command line app's own installed application credentials. These are published
+    /// in the open by Google, because an installed app cannot keep a secret, so they are not
+    /// secret in any real sense. They are left empty here anyway, so the public source carries no
+    /// value a scanner could mistake for a leak. Paste the pair the Gemini command line app ships
+    /// with into your own build and the Gemini subscription sign in appears; leave them empty and
+    /// that one route is simply not offered.
+    /// </summary>
+    public const string GeminiClientId = "";
+
+    public const string GeminiClientSecret = "";
+
     public static bool HasMicrosoft => MicrosoftAppId.Trim().Length > 0;
 
     public static bool HasBroker => AtlassianBroker.Trim().Length > 0;
+
+    public static bool HasGemini => GeminiClientId.Trim().Length > 0 && GeminiClientSecret.Trim().Length > 0;
 
     /// <summary>The broker address without a trailing slash, ready to have a path added.</summary>
     public static string Broker => AtlassianBroker.Trim().TrimEnd('/');
