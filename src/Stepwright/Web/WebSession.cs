@@ -376,9 +376,49 @@ public sealed class WebSession : IDisposable
         await CdpAsync("Input.dispatchMouseEvent", At("mouseReleased"), token).ConfigureAwait(true);
     }
 
-    /// <summary>Types text into whatever is focused, as true input the editor cannot tell from a person's.</summary>
-    public Task TypeAsync(string text, CancellationToken token) =>
-        CdpAsync("Input.insertText", new JsonObject { ["text"] = text }, token);
+    /// <summary>
+    /// Types text into whatever is focused, as true input the editor cannot tell from a person's.
+    ///
+    /// The bulk goes in at once, because typing a long step letter by letter would take an age.
+    /// But the last letter is pressed as a real key, and that matters more than it sounds: an
+    /// editor of the kind Microsoft builds keeps its own idea of what it holds, and text poured in
+    /// at once updates what is on screen without always telling that inner model. Then the send
+    /// button stays greyed and the Enter goes nowhere, which is exactly what was happening. One
+    /// true keystroke at the end makes the editor notice everything before it.
+    /// </summary>
+    public async Task TypeAsync(string text, CancellationToken token)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            return;
+        }
+
+        string bulk = text[..^1];
+        string last = text[^1..];
+
+        if (bulk.Length > 0)
+        {
+            await CdpAsync("Input.insertText", new JsonObject { ["text"] = bulk }, token).ConfigureAwait(true);
+            await Task.Delay(120, token).ConfigureAwait(true);
+        }
+
+        await PressAsync(last, token).ConfigureAwait(true);
+    }
+
+    /// <summary>Presses one character as a real key, so the page sees a true keystroke.</summary>
+    private async Task PressAsync(string character, CancellationToken token)
+    {
+        JsonObject Key(string type) => new()
+        {
+            ["type"] = type,
+            ["text"] = type == "keyUp" ? string.Empty : character,
+            ["unmodifiedText"] = type == "keyUp" ? string.Empty : character,
+            ["key"] = character,
+        };
+
+        await CdpAsync("Input.dispatchKeyEvent", Key("keyDown"), token).ConfigureAwait(true);
+        await CdpAsync("Input.dispatchKeyEvent", Key("keyUp"), token).ConfigureAwait(true);
+    }
 
     /// <summary>Presses Enter, as a true keystroke.</summary>
     public async Task EnterAsync(CancellationToken token)

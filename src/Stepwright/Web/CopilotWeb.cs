@@ -261,6 +261,30 @@ public static class CopilotWeb
             }
         }
 
+        if (dumped["buttons"] is JsonArray buttons && buttons.Count > 0)
+        {
+            report.AppendLine();
+            report.AppendLine("Every button on the page. The columns are:");
+            report.AppendLine("[greyed] testid | leftPx topPx | label");
+            report.AppendLine(new string('-', 70));
+
+            foreach (JsonNode? button in buttons)
+            {
+                if (button is null)
+                {
+                    continue;
+                }
+
+                string off = (button["off"]?.GetValue<bool>() ?? false) ? "x" : " ";
+                string testid = button["testid"]?.GetValue<string>() ?? "-";
+                int left = button["left"]?.GetValue<int>() ?? 0;
+                int top = button["top"]?.GetValue<int>() ?? 0;
+                string label = button["label"]?.GetValue<string>() ?? string.Empty;
+
+                report.AppendLine($"{off} {testid} | {left} {top} | {label}");
+            }
+        }
+
         return report.ToString();
     }
 
@@ -644,12 +668,33 @@ public static class CopilotWeb
         """.Replace("__QUESTION__", asked, StringComparison.Ordinal);
     }
 
-    /// <summary>Writes down every visible piece of text on the page, for the report.</summary>
+    /// <summary>
+    /// Writes down every visible piece of text on the page, and every button with the name it
+    /// answers to and whether it is greyed. The buttons matter as much as the text: when a
+    /// question will not send, the send button and its state are the thing worth seeing.
+    /// </summary>
     private static string DumpScript() =>
         "(async () => {" + Helpers + """
           const before = new Set(window.__swBeforeAll || []);
           const box = composer();
-          return { composer: !!box, url: location.href, items: record(before) };
+
+          const buttons = [];
+          for (const b of deep()) {
+            if (b.tagName !== 'BUTTON' && !(b.getAttribute && b.getAttribute('role') === 'button')) continue;
+            let box2; try { box2 = b.getBoundingClientRect(); } catch (e) { continue; }
+            if (box2.width < 4 || box2.height < 4) continue;
+            const st = (b.ownerDocument.defaultView || window).getComputedStyle(b);
+            if (!st || st.visibility === 'hidden' || st.display === 'none') continue;
+            buttons.push({
+              label: norm((b.getAttribute('aria-label') || '') + ' ' + (b.title || '') + ' ' + (b.textContent || '')).slice(0, 60),
+              testid: (b.getAttribute('data-testid') || b.getAttribute('data-test-id') || '-'),
+              off: !!(b.disabled || b.getAttribute('aria-disabled') === 'true'),
+              top: box2.top | 0,
+              left: box2.left | 0,
+            });
+          }
+
+          return { composer: !!box, url: location.href, items: record(before), buttons: buttons };
         })()
         """;
 }
