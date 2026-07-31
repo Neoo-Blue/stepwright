@@ -331,6 +331,73 @@ public sealed class WebSession : IDisposable
             ?? outer?["result"]?["result"]?["value"];
     }
 
+    /// <summary>
+    /// Calls a method of the browser's developer protocol. This is how real, trusted input is
+    /// made: a framework editor of the kind Microsoft builds ignores an event a script dispatches,
+    /// because a script can say it is a keystroke but cannot make it a true one. Input made this
+    /// way is true, so the editor accepts it, the placeholder clears and the send button arms,
+    /// which a dispatched event never managed.
+    /// </summary>
+    public async Task<JsonNode?> CdpAsync(string method, JsonObject parameters, CancellationToken token)
+    {
+        await ReadyAsync().ConfigureAwait(true);
+
+        Task<string> asked = _view!.CoreWebView2.CallDevToolsProtocolMethodAsync(method, parameters.ToJsonString());
+
+        using CancellationTokenSource limit = CancellationTokenSource.CreateLinkedTokenSource(token);
+        limit.CancelAfter(TimeSpan.FromSeconds(30));
+
+        string raw = await asked.WaitAsync(limit.Token).ConfigureAwait(true);
+
+        try
+        {
+            return JsonNode.Parse(raw);
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>A true left click at a point, in the page's own coordinates.</summary>
+    public async Task ClickAsync(double x, double y, CancellationToken token)
+    {
+        JsonObject At(string type) => new()
+        {
+            ["type"] = type,
+            ["x"] = x,
+            ["y"] = y,
+            ["button"] = "left",
+            ["buttons"] = type == "mousePressed" ? 1 : 0,
+            ["clickCount"] = 1,
+        };
+
+        await CdpAsync("Input.dispatchMouseEvent", At("mousePressed"), token).ConfigureAwait(true);
+        await CdpAsync("Input.dispatchMouseEvent", At("mouseReleased"), token).ConfigureAwait(true);
+    }
+
+    /// <summary>Types text into whatever is focused, as true input the editor cannot tell from a person's.</summary>
+    public Task TypeAsync(string text, CancellationToken token) =>
+        CdpAsync("Input.insertText", new JsonObject { ["text"] = text }, token);
+
+    /// <summary>Presses Enter, as a true keystroke.</summary>
+    public async Task EnterAsync(CancellationToken token)
+    {
+        JsonObject Key(string type) => new()
+        {
+            ["type"] = type,
+            ["windowsVirtualKeyCode"] = 13,
+            ["nativeVirtualKeyCode"] = 13,
+            ["key"] = "Enter",
+            ["code"] = "Enter",
+            ["text"] = type == "keyDown" ? "\r" : string.Empty,
+        };
+
+        await CdpAsync("Input.dispatchKeyEvent", Key("rawKeyDown"), token).ConfigureAwait(true);
+        await CdpAsync("Input.dispatchKeyEvent", Key("keyDown"), token).ConfigureAwait(true);
+        await CdpAsync("Input.dispatchKeyEvent", Key("keyUp"), token).ConfigureAwait(true);
+    }
+
     /// <summary>The text a piece of script returned, or nothing when it returned nothing.</summary>
     public async Task<string> TextAsync(string script, CancellationToken token)
     {
