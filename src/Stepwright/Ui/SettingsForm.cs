@@ -1153,14 +1153,19 @@ public sealed class SettingsForm : Form
 
         AiAgent? agent = AiAgents.Find(SelectedProvider.Id);
 
-        // Copilot has no model to choose: the page is whatever Copilot is, and the work account
-        // route does not let one be named. So the field and its button are turned off rather
-        // than left to earn a 404.
+        // Copilot does offer models, but not to name from here: the page route uses whichever one
+        // is chosen inside the Copilot window, which the signed in profile remembers, and the
+        // work account route does not take a model at all. So the field and its Find button are
+        // off, and the note points at where the choice actually lives.
         if (SelectedProvider.Id == AiProviders.Copilot)
         {
             _aiModels.Enabled = false;
             _aiModel.Enabled = false;
-            _aiModelNote.Text = "Copilot has no model to choose. Whatever your Copilot is, is what answers.";
+            _aiModelNote.Text = SelectedAuth == AiAuthKinds.Browser
+                ? "Microsoft 365 Copilot lets you choose a model in its own window. Stepwright uses"
+                  + " whichever the Copilot window is set to, so choose it there."
+                : "The work account route does not take a model. Copilot answers with whatever your"
+                  + " licence is set to use.";
         }
         else if (auth == AiAuthKinds.Cli && agent is not null)
         {
