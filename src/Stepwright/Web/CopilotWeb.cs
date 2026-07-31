@@ -134,11 +134,21 @@ public static class CopilotWeb
             {
                 "compose" => "Stepwright could not find the box to type the question into",
                 "send" => "Stepwright typed the question but could not send it",
-                "answer" => "Stepwright sent the question but no answer appeared",
+                "answer" => "Stepwright sent the question but could not read the answer",
                 _ => "The Copilot page could not be used",
             };
 
-            throw new InvalidOperationException($"{where}. {failed}");
+            // A sample of what the page held is carried through, so a report of a failure to read
+            // the answer shows the shape of the page rather than only that it failed.
+            string sample = (answered["sample"]?.GetValue<string>() ?? string.Empty).Replace('\n', ' ').Trim();
+            if (sample.Length > 160)
+            {
+                sample = sample[..160] + "...";
+            }
+
+            string tail = sample.Length > 0 ? " The page ended with: " + sample : string.Empty;
+
+            throw new InvalidOperationException($"{where}. {failed}.{tail}");
         }
 
         string text = answered["text"]?.GetValue<string>() ?? string.Empty;
@@ -318,27 +328,58 @@ public static class CopilotWeb
             last = now;
           }
 
-          const after = transcript();
+          let after = transcript();
 
           if (after.length <= before.length + 8) {
             return { stage: 'answer', error: 'The question was sent but nothing new appeared within the wait.' };
           }
 
-          // The answer is the text that appeared after the question, in reading order.
-          const needle = question.slice(0, 48);
-          const at = after.lastIndexOf(needle);
-          let text = at >= 0 ? after.slice(at + needle.length) : after.slice(before.length);
+          const strip = s => {
+            const chrome = [
+              /copilot can make mistakes[\s\S]*$/i,
+              /ai-generated content may be incorrect[\s\S]*$/i,
+              /message copilot[\s\S]*$/i,
+              /ask me anything[\s\S]*$/i,
+            ];
+            for (const p of chrome) s = s.replace(p, '');
+            return s.trim();
+          };
 
-          const chrome = [
-            /copilot can make mistakes[\s\S]*$/i,
-            /ai-generated content may be incorrect[\s\S]*$/i,
-            /message copilot[\s\S]*$/i,
-            /ask me anything[\s\S]*$/i,
-          ];
+          const needle = question.slice(0, Math.min(48, question.length));
+          const shortNeedle = question.slice(0, Math.min(24, question.length));
 
-          for (const pattern of chrome) text = text.replace(pattern, '');
+          // The composer very often keeps the question sitting at the bottom of the page after
+          // it is sent, so an occurrence of it at the very end is that box, not a turn in the
+          // transcript. Cut a trailing copy off before looking for the answer.
+          const trailing = after.lastIndexOf(shortNeedle);
+          if (trailing > after.length - question.length - 80) {
+            after = after.slice(0, trailing);
+          }
 
-          return { text: text.trim() };
+          // The answer is the text that follows the most recent real occurrence of the question.
+          // Walk occurrences from the last backwards and take the first that leaves something.
+          const spots = [];
+          let idx = after.indexOf(needle);
+          while (idx !== -1) { spots.push(idx); idx = after.indexOf(needle, idx + 1); }
+
+          let text = '';
+          for (let k = spots.length - 1; k >= 0; k--) {
+            const candidate = strip(after.slice(spots[k] + needle.length));
+            if (candidate.length > 0) { text = candidate; break; }
+          }
+
+          // Nothing keyed off the question. Fall back to whatever is new since before it was sent.
+          if (!text && after.length > before.length) {
+            text = strip(after.slice(before.length));
+          }
+
+          if (!text) {
+            // Hand back a look at the tail of the page, so a report of this says what the page
+            // actually held where the answer was expected.
+            return { stage: 'answer', error: 'new text appeared but the answer could not be told apart from it', sample: after.slice(-280) };
+          }
+
+          return { text: text };
         })()
         """.Replace("__QUESTION__", asked, StringComparison.Ordinal);
     }
