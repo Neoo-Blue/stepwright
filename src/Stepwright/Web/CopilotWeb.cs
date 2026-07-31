@@ -111,35 +111,52 @@ public static class CopilotWeb
         }).ConfigureAwait(false);
     }
 
-    /// <summary>Turns what the page returned into either an answer or a reason it failed.</summary>
+    /// <summary>
+    /// Turns what the page returned into either an answer or a reason it failed. The reason
+    /// names the stage that failed, so a report of what went wrong points at one place rather
+    /// than at the whole thing.
+    /// </summary>
     private static string Read(JsonNode? answered)
     {
         if (answered is null)
         {
-            throw new InvalidOperationException("The Copilot page did not answer. Try again, or use a key.");
+            throw new InvalidOperationException(
+                "The Copilot page did not answer at all, which usually means it is still loading or"
+                + " has changed shape. Try again, or use the work account route or a key.");
         }
 
+        string stage = answered["stage"]?.GetValue<string>() ?? string.Empty;
         string? failed = answered["error"]?.GetValue<string>();
 
         if (!string.IsNullOrWhiteSpace(failed))
         {
-            throw new InvalidOperationException("Copilot could not be asked through the page. " + failed);
+            string where = stage switch
+            {
+                "compose" => "Stepwright could not find the box to type the question into",
+                "send" => "Stepwright typed the question but could not send it",
+                "answer" => "Stepwright sent the question but no answer appeared",
+                _ => "The Copilot page could not be used",
+            };
+
+            throw new InvalidOperationException($"{where}. {failed}");
         }
 
         string text = answered["text"]?.GetValue<string>() ?? string.Empty;
 
         return text.Trim().Length == 0
-            ? throw new InvalidOperationException("Copilot answered with nothing. Try again, or use a key.")
+            ? throw new InvalidOperationException("Copilot answered but Stepwright could not read the answer off the page. Try again, or use a key.")
             : text.Trim();
     }
 
     /// <summary>
     /// The script that does the talking.
     ///
-    /// It finds the box a person would type in, types, sends, and then waits for the page to stop
-    /// changing rather than for any particular element to appear. Waiting for stillness is the
-    /// one thing that stays true across redesigns: an answer that is still being written keeps
-    /// changing the page, and one that is finished stops.
+    /// The Copilot chat page is a heavy application that builds itself after it loads, hides parts
+    /// of itself inside shadow roots and frames, and does not always send on the Enter key. So
+    /// this waits for the box to actually exist before typing, looks for it through shadow roots
+    /// and same origin frames rather than only at the top of the page, sends by key and then by
+    /// button, and waits for the answer to stop growing. Every place it can give up names the
+    /// stage it gave up at, so a failure says where it happened.
     /// </summary>
     private static string Script(string question)
     {
@@ -150,39 +167,107 @@ public static class CopilotWeb
           const sleep = ms => new Promise(r => setTimeout(r, ms));
           const question = __QUESTION__;
 
-          const visible = el => {
-            if (!el) return false;
-            const box = el.getBoundingClientRect();
-            return box.width > 80 && box.height > 12;
+          // Everything on the page, reached through shadow roots and same origin frames, not just
+          // the top document. The chat surface lives inside these more often than not.
+          const deep = () => {
+            const out = [];
+            const stack = [document];
+            const seen = new Set();
+            while (stack.length) {
+              const root = stack.pop();
+              if (!root || seen.has(root)) continue;
+              seen.add(root);
+              let all = [];
+              try { all = root.querySelectorAll ? [...root.querySelectorAll('*')] : []; } catch (e) { all = []; }
+              for (const el of all) {
+                out.push(el);
+                if (el.shadowRoot) stack.push(el.shadowRoot);
+                if (el.tagName === 'IFRAME') {
+                  try { if (el.contentDocument) stack.push(el.contentDocument); } catch (e) {}
+                }
+              }
+            }
+            return out;
           };
 
-          // The composer is the last thing on the page a person could type into. Chat pages put
-          // it at the bottom, and the transcript above it never contains one.
-          const boxes = [...document.querySelectorAll('textarea, [contenteditable="true"], input[type="text"]')]
-            .filter(visible);
-          const box = boxes[boxes.length - 1];
+          const visible = el => {
+            if (!el) return false;
+            let box;
+            try { box = el.getBoundingClientRect(); } catch (e) { return false; }
+            if (box.width < 60 || box.height < 12) return false;
+            const style = (el.ownerDocument.defaultView || window).getComputedStyle(el);
+            return style && style.visibility !== 'hidden' && style.display !== 'none';
+          };
+
+          const composer = () => {
+            const boxes = deep().filter(el => {
+              if (!visible(el)) return false;
+              if (el.isContentEditable) return true;
+              const tag = el.tagName;
+              if (tag === 'TEXTAREA') return true;
+              if (tag === 'INPUT' && (el.type === 'text' || el.type === 'search')) return true;
+              return el.getAttribute && el.getAttribute('role') === 'textbox';
+            });
+            // The composer sits at the bottom, so the lowest visible one on the page wins.
+            boxes.sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top);
+            return boxes[boxes.length - 1] || null;
+          };
+
+          // The whole readable text on the page, reached the same deep way, so an answer written
+          // inside a frame still counts.
+          const transcript = () => {
+            let text = '';
+            const seen = new Set();
+            const docs = [document];
+            for (const el of deep()) {
+              if (el.tagName === 'IFRAME') {
+                try { if (el.contentDocument) docs.push(el.contentDocument); } catch (e) {}
+              }
+            }
+            for (const d of docs) {
+              if (seen.has(d)) continue;
+              seen.add(d);
+              try { text += '\n' + (d.body ? d.body.innerText : ''); } catch (e) {}
+            }
+            return text;
+          };
+
+          // 1. Wait for the box to exist. The page is still building itself for a while after it
+          //    says it has loaded.
+          let box = null;
+          const appear = Date.now() + 30000;
+          while (Date.now() < appear) {
+            box = composer();
+            if (box) break;
+            await sleep(500);
+          }
 
           if (!box) {
-            return { error: 'the box to type in could not be found on the page' };
+            return { stage: 'compose', error: 'The page may still be loading, or it keeps the chat inside a part this cannot reach.' };
           }
 
-          const before = document.body.innerText || '';
+          const before = transcript();
 
           box.focus();
-          box.scrollIntoView({ block: 'center' });
+          try { box.scrollIntoView({ block: 'center' }); } catch (e) {}
 
-          if (box.isContentEditable) {
-            document.execCommand('selectAll', false, null);
-            document.execCommand('insertText', false, question);
-          } else {
-            const setter = Object.getOwnPropertyDescriptor(
-              box.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype,
-              'value').set;
-            setter.call(box, question);
-            box.dispatchEvent(new Event('input', { bubbles: true }));
-          }
+          const type = () => {
+            if (box.isContentEditable) {
+              try { document.execCommand('selectAll', false, null); } catch (e) {}
+              const ok = (() => { try { return document.execCommand('insertText', false, question); } catch (e) { return false; } })();
+              if (!ok) {
+                box.textContent = question;
+              }
+            } else {
+              const proto = box.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+              const setter = Object.getOwnPropertyDescriptor(proto, 'value').set;
+              setter.call(box, question);
+            }
+            box.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: question }));
+          };
 
-          await sleep(400);
+          type();
+          await sleep(500);
 
           const key = name => box.dispatchEvent(new KeyboardEvent(name, {
             key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true,
@@ -190,31 +275,42 @@ public static class CopilotWeb
 
           key('keydown'); key('keypress'); key('keyup');
 
-          await sleep(1200);
+          await sleep(1500);
 
-          // Nothing moved, so the Enter key was not what sends it here. Press the button instead.
-          if ((document.body.innerText || '') === before) {
-            const send = [...document.querySelectorAll('button')].filter(b => {
-              const label = ((b.getAttribute('aria-label') || '') + ' ' + (b.title || '') + ' ' + (b.textContent || '')).toLowerCase();
-              return visible(b) && !b.disabled && /send|submit/.test(label);
+          // Nothing moved, so this page does not send on Enter. Find the send button, which sits
+          // right by the box and is enabled only once there is something to send.
+          const grew = () => transcript().length > before.length + 8;
+
+          if (!grew()) {
+            const send = deep().filter(b => {
+              if (b.tagName !== 'BUTTON' && !(b.getAttribute && b.getAttribute('role') === 'button')) return false;
+              if (!visible(b) || b.disabled || b.getAttribute('aria-disabled') === 'true') return false;
+              const label = ((b.getAttribute('aria-label') || '') + ' ' + (b.title || '') + ' ' + (b.textContent || '') + ' ' + (b.getAttribute('data-testid') || '')).toLowerCase();
+              return /send|submit/.test(label);
             }).pop();
 
-            if (send) { send.click(); }
+            if (send) {
+              send.click();
+            } else {
+              return { stage: 'send', error: 'The Enter key did nothing and no send button could be found.' };
+            }
           }
 
-          // Wait for the page to stop growing. Two and a half minutes is longer than Copilot has
-          // ever needed and short enough that a wedged page does not hold up the whole run.
+          await sleep(1500);
+
+          // 2. Wait for the answer to appear and then to stop growing. An answer still being
+          //    written keeps the page changing; a finished one goes still.
           let last = '';
           let still = 0;
           const until = Date.now() + 150000;
 
           while (Date.now() < until) {
             await sleep(900);
-            const now = document.body.innerText || '';
+            const now = transcript();
 
             if (now === last && now.length > before.length + 8) {
               still += 1;
-              if (still >= 4) { break; }
+              if (still >= 4) break;
             } else {
               still = 0;
             }
@@ -222,19 +318,17 @@ public static class CopilotWeb
             last = now;
           }
 
-          const after = document.body.innerText || '';
+          const after = transcript();
 
           if (after.length <= before.length + 8) {
-            return { error: 'the page never showed an answer' };
+            return { stage: 'answer', error: 'The question was sent but nothing new appeared within the wait.' };
           }
 
-          // The answer is whatever follows the question in reading order. Matching on the start
-          // of the question rather than the whole of it survives a page that wraps or trims it.
+          // The answer is the text that appeared after the question, in reading order.
           const needle = question.slice(0, 48);
           const at = after.lastIndexOf(needle);
           let text = at >= 0 ? after.slice(at + needle.length) : after.slice(before.length);
 
-          // The furniture at the bottom of the page is not part of what Copilot said.
           const chrome = [
             /copilot can make mistakes[\s\S]*$/i,
             /ai-generated content may be incorrect[\s\S]*$/i,
@@ -242,7 +336,7 @@ public static class CopilotWeb
             /ask me anything[\s\S]*$/i,
           ];
 
-          for (const pattern of chrome) { text = text.replace(pattern, ''); }
+          for (const pattern of chrome) text = text.replace(pattern, '');
 
           return { text: text.trim() };
         })()

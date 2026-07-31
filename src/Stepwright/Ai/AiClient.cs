@@ -718,7 +718,7 @@ public static class AiClient
 
         if (!string.IsNullOrEmpty(access) && settings.AiAccessExpires > DateTimeOffset.UtcNow)
         {
-            return access;
+            return Usable(access);
         }
 
         string[] scopes = string.Equals(settings.AiProvider, AiProviders.Copilot, StringComparison.OrdinalIgnoreCase)
@@ -745,7 +745,26 @@ public static class AiClient
         settings.RememberMicrosoft(renewed);
         settings.Save();
 
-        return renewed.AccessToken;
+        return Usable(renewed.AccessToken);
+    }
+
+    /// <summary>
+    /// Makes sure the token is one worth sending. A work account token is a JWT, which is three
+    /// parts joined by dots, and Microsoft rejects anything else with a message about dots that
+    /// says nothing to the person. When the token held here is not that, the fault is on this
+    /// side, so it is caught here and turned into an instruction the person can act on rather
+    /// than sent off to come back as a riddle.
+    /// </summary>
+    private static string Usable(string token)
+    {
+        if (!string.IsNullOrWhiteSpace(token) && token.Count(c => c == '.') == 2)
+        {
+            return token;
+        }
+
+        throw new InvalidOperationException(
+            "The Microsoft sign in on this machine did not leave a usable token. Open Settings,"
+            + " sign out of the work account, and sign in again.");
     }
 
     /// <summary>
