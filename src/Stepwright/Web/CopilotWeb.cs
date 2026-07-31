@@ -536,7 +536,44 @@ public static class CopilotWeb
             || /^try asking/i.test(t)
             || /how can i help/i.test(t);
 
+          // What the page calls its own parts. Copilot marks the question and the answer plainly,
+          // so they are read by those marks first: it is exact where guessing by size was not,
+          // and it is what a redesign would have to change on purpose rather than by accident.
+          const marked = name => deep().filter(el => {
+            const id = el.getAttribute && (el.getAttribute('data-testid') || el.getAttribute('data-test-id'));
+            return id === name;
+          });
+
+          const answerByMark = () => {
+            const said = marked('copilot-message-div');
+            if (!said.length) return '';
+
+            const last = said[said.length - 1];
+            let t = '';
+            try { t = norm(last.innerText); } catch (e) { return ''; }
+
+            // The suggestions under an answer sit inside it, and they are not part of what was
+            // said, so their words are taken back out.
+            let aside = [];
+            try {
+              aside = [...last.querySelectorAll('[role="toolbar"], button, [role="button"]')]
+                .map(e => { try { return norm(e.innerText); } catch (x) { return ''; } })
+                .filter(s => s.length > 2);
+            } catch (e) {}
+
+            for (const piece of aside) { t = t.split(piece).join(' '); }
+
+            t = t.replace(/^copilot said:\s*/i, '');
+            t = t.replace(/ai-generated content may be incorrect/ig, '');
+
+            return stripChrome(norm(t));
+          };
+
           const answerFrom = () => {
+            const exact = answerByMark();
+            if (exact) return exact;
+
+            // Nothing marked, so fall back to reading the page as blocks.
             const fresh = blocks().filter(t => !before.has(t) && !isQuestion(t) && !greeting(t));
             if (!fresh.length) return '';
             fresh.sort((a, b) => a.length - b.length);
@@ -547,7 +584,20 @@ public static class CopilotWeb
           // nothing on the page can be an answer to it, and saying otherwise is how a greeting
           // came back as a reply. So this waits for the question to post, and if it never does it
           // says the question was never sent rather than inventing something.
-          const posted = () => blocks().some(t => !before.has(t) && isQuestion(t));
+          // The question has gone once the page shows it as a turn of its own, which it marks, or
+          // failing that once it appears as a block outside the box. An answer already showing is
+          // proof enough on its own.
+          const posted = () => {
+            const asked = marked('chatOutput');
+            for (const el of asked) {
+              let t = ''; try { t = norm(el.innerText); } catch (e) {}
+              if (isQuestion(t)) return true;
+            }
+
+            if (answerByMark()) return true;
+
+            return blocks().some(t => !before.has(t) && isQuestion(t));
+          };
 
           let went = false;
           const goes = Date.now() + 25000;
