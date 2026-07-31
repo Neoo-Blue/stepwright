@@ -323,8 +323,12 @@ public sealed class WebSession : IDisposable
             return new JsonObject { ["error"] = message, ["stage"] = "script" };
         }
 
-        // Runtime.evaluate wraps the value: result.result.value is what the script returned.
-        return outer?["result"]?["result"]?["value"];
+        // Runtime.evaluate hands back the command result directly, so the value the script
+        // returned is at result.value, one level in. The other shapes are tried after it only so
+        // a small difference between browser versions cannot make a working script read as empty.
+        return outer?["result"]?["value"]
+            ?? outer?["value"]
+            ?? outer?["result"]?["result"]?["value"];
     }
 
     /// <summary>The text a piece of script returned, or nothing when it returned nothing.</summary>
