@@ -273,26 +273,58 @@ public sealed class WebSession : IDisposable
     /// Runs a piece of script in the page and gives back what it returned. Everything the page
     /// route does goes through here, because a request made by the page carries the person's own
     /// session without this app ever holding a token.
+    ///
+    /// The plain way to run a script in this browser hands back the result at once, and a script
+    /// that does its work over time, as every one of these does, hands back an unfinished promise
+    /// that reads as an empty object. So this goes the longer way round and asks the browser to
+    /// wait for the promise to settle before reading the value, which is the whole difference
+    /// between seeing what the script found and seeing nothing at all.
     /// </summary>
     public async Task<JsonNode?> RunAsync(string script, CancellationToken token)
     {
         await ReadyAsync().ConfigureAwait(true);
 
-        Task<string> asked = _view!.CoreWebView2.ExecuteScriptAsync(script);
+        var call = new JsonObject
+        {
+            ["expression"] = script,
+            ["awaitPromise"] = true,
+            ["returnByValue"] = true,
+            ["userGesture"] = true,
+        };
+
+        Task<string> asked = _view!.CoreWebView2.CallDevToolsProtocolMethodAsync(
+            "Runtime.evaluate",
+            call.ToJsonString());
 
         using CancellationTokenSource limit = CancellationTokenSource.CreateLinkedTokenSource(token);
-        limit.CancelAfter(TimeSpan.FromMinutes(3));
+        limit.CancelAfter(TimeSpan.FromMinutes(4));
 
         string raw = await asked.WaitAsync(limit.Token).ConfigureAwait(true);
 
+        JsonNode? outer;
+
         try
         {
-            return JsonNode.Parse(raw);
+            outer = JsonNode.Parse(raw);
         }
         catch (System.Text.Json.JsonException)
         {
             return null;
         }
+
+        // A script that threw rather than returned. Surfaced as an error object so the caller can
+        // say what went wrong rather than only that nothing came back.
+        if (outer?["exceptionDetails"] is JsonNode failure)
+        {
+            string message = failure["exception"]?["description"]?.GetValue<string>()
+                ?? failure["text"]?.GetValue<string>()
+                ?? "the script did not finish";
+
+            return new JsonObject { ["error"] = message, ["stage"] = "script" };
+        }
+
+        // Runtime.evaluate wraps the value: result.result.value is what the script returned.
+        return outer?["result"]?["result"]?["value"];
     }
 
     /// <summary>The text a piece of script returned, or nothing when it returned nothing.</summary>
