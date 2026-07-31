@@ -66,7 +66,11 @@ public static class CopilotWeb
     /// Puts one question to Copilot and gives back what it said. Each question starts fresh, so
     /// nothing from the last step colours the next one.
     /// </summary>
-    public static async Task<string> AskAsync(bool work, string question, CancellationToken token)
+    public static async Task<string> AskAsync(
+        bool work,
+        string question,
+        CancellationToken token,
+        IReadOnlyList<byte[]>? pictures = null)
     {
         if (!Session.Remembered)
         {
@@ -74,21 +78,69 @@ public static class CopilotWeb
                 "Copilot is not signed in on this machine yet. Sign in in Settings, once.");
         }
 
-        return await UiThread.RunAsync(async () =>
+        List<string> files = Written(pictures);
+
+        try
         {
-            JsonNode? prepared = await DriveAsync(work, question, token).ConfigureAwait(true);
-
-            if (prepared?["ok"]?.GetValue<bool>() != true)
+            return await UiThread.RunAsync(async () =>
             {
-                throw new InvalidOperationException(
-                    "Stepwright could not find the box to type the question into. "
-                    + (prepared?["error"]?.GetValue<string>()
-                       ?? "The page may still be loading, or it keeps the chat inside a part this cannot reach."));
-            }
+                JsonNode? prepared = await DriveAsync(work, question, token, files).ConfigureAwait(true);
 
-            JsonNode? answered = await Session.RunAsync(HarvestScript(question), token).ConfigureAwait(true);
-            return Read(answered);
-        }).ConfigureAwait(false);
+                if (prepared?["ok"]?.GetValue<bool>() != true)
+                {
+                    throw new InvalidOperationException(
+                        "Stepwright could not find the box to type the question into. "
+                        + (prepared?["error"]?.GetValue<string>()
+                           ?? "The page may still be loading, or it keeps the chat inside a part this cannot reach."));
+                }
+
+                JsonNode? answered = await Session.RunAsync(HarvestScript(question), token).ConfigureAwait(true);
+                return Read(answered);
+            }).ConfigureAwait(false);
+        }
+        finally
+        {
+            foreach (string file in files)
+            {
+                try
+                {
+                    File.Delete(file);
+                }
+                catch (IOException)
+                {
+                    // A picture the browser still holds open is cleared on the next run instead.
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Puts the pictures somewhere the browser can reach them. A page takes a file from disk
+    /// rather than bytes in memory, so there has to be a file, and it is deleted the moment the
+    /// question has gone.
+    /// </summary>
+    private static List<string> Written(IReadOnlyList<byte[]>? pictures)
+    {
+        var files = new List<string>();
+
+        foreach (byte[] picture in pictures ?? Array.Empty<byte[]>())
+        {
+            try
+            {
+                string path = Path.Combine(
+                    Path.GetTempPath(),
+                    "stepwright-" + Guid.NewGuid().ToString("n")[..12] + ".png");
+
+                File.WriteAllBytes(path, picture);
+                files.Add(path);
+            }
+            catch (IOException)
+            {
+                // A picture that cannot be written is simply not sent; the words still are.
+            }
+        }
+
+        return files;
     }
 
     /// <summary>
@@ -96,7 +148,11 @@ public static class CopilotWeb
     /// the cursor, the text typed through the developer protocol, and a real Enter. Everything
     /// that has to be true rather than dispatched happens here.
     /// </summary>
-    private static async Task<JsonNode?> DriveAsync(bool work, string question, CancellationToken token)
+    private static async Task<JsonNode?> DriveAsync(
+        bool work,
+        string question,
+        CancellationToken token,
+        IReadOnlyList<string>? files = null)
     {
         await Session.GoAsync(work ? WorkPage : PersonalPage, token).ConfigureAwait(true);
 
@@ -114,6 +170,20 @@ public static class CopilotWeb
             double y = prepared["y"]?.GetValue<double>() ?? 0;
 
             string asked = Flatten(question);
+
+            // The picture goes on before the words, because an attachment takes a moment to be
+            // taken up and that moment is better spent while the question is being typed. A
+            // picture that will not attach is not a failure: the words still go, and the step is
+            // written from them, which is what happened before pictures were possible at all.
+            if (files is { Count: > 0 })
+            {
+                bool attached = await Session.AttachAsync(FileBox, files, token).ConfigureAwait(true);
+
+                if (attached)
+                {
+                    await ReadyForSendAsync(token).ConfigureAwait(true);
+                }
+            }
 
             await Session.ClickAsync(x, y, token).ConfigureAwait(true);
             await Task.Delay(200, token).ConfigureAwait(true);
@@ -505,6 +575,70 @@ public static class CopilotWeb
 
           const b = box.getBoundingClientRect();
           return { ok: true, x: b.left + Math.min(60, b.width / 2), y: b.top + b.height / 2 };
+        })()
+        """;
+
+    /// <summary>
+    /// Finds the box a page keeps for files. It is nearly always there and nearly always hidden,
+    /// which is exactly what is wanted: the file can be handed over without the file dialog ever
+    /// opening. One that takes pictures is preferred over one that takes anything.
+    /// </summary>
+    private const string FileBox = """
+        (() => {
+          const found = [];
+          const stack = [document];
+          const seen = new Set();
+          while (stack.length) {
+            const root = stack.pop();
+            if (!root || seen.has(root)) continue;
+            seen.add(root);
+            let all = [];
+            try { all = root.querySelectorAll ? [...root.querySelectorAll('*')] : []; } catch (e) { all = []; }
+            for (const el of all) {
+              if (el.tagName === 'INPUT' && el.type === 'file') found.push(el);
+              if (el.shadowRoot) stack.push(el.shadowRoot);
+              if (el.tagName === 'IFRAME') { try { if (el.contentDocument) stack.push(el.contentDocument); } catch (e) {} }
+            }
+          }
+          if (!found.length) return null;
+          const pictures = found.filter(el => (el.accept || '').toLowerCase().includes('image'));
+          return pictures[0] || found[0];
+        })()
+        """;
+
+    /// <summary>
+    /// Waits for an attached picture to finish being taken up. A page will not send while it is
+    /// still carrying a picture up, so sending before it is ready loses the picture, the question
+    /// or both.
+    /// </summary>
+    private static async Task ReadyForSendAsync(CancellationToken token)
+    {
+        for (int i = 0; i < 30; i++)
+        {
+            await Task.Delay(1000, token).ConfigureAwait(true);
+
+            JsonNode? state = await Session.RunAsync(AttachedScript, token).ConfigureAwait(true);
+
+            if (state?["ready"]?.GetValue<bool>() == true)
+            {
+                return;
+            }
+        }
+    }
+
+    /// <summary>
+    /// True once a picture is on the message and nothing is still being carried up. A page shows
+    /// what it is carrying and shows a progress bar while it carries, so the one without the
+    /// other is the moment to send.
+    /// </summary>
+    private const string AttachedScript = """
+        (() => {
+          const busy = document.querySelectorAll('[role="progressbar"], progress');
+          for (const b of busy) {
+            let box; try { box = b.getBoundingClientRect(); } catch (e) { continue; }
+            if (box.width > 4 && box.height > 2) return { ready: false, why: 'still carrying it up' };
+          }
+          return { ready: true };
         })()
         """;
 

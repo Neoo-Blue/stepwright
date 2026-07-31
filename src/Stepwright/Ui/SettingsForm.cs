@@ -1195,17 +1195,26 @@ public sealed class SettingsForm : Form
         _aiBrowserGroup.Visible = auth == AiAuthKinds.Browser;
         _aiMicrosoftGroup.Visible = auth == AiAuthKinds.Microsoft;
 
-        // A service that cannot be shown a picture should not offer to be shown one.
-        bool reads = SelectedProvider.SupportsPictures;
+        // A service that cannot be shown a picture should not offer to be shown one. Copilot is
+        // both cases at once: its interface takes text and nothing else, and its page takes an
+        // attachment the way a person would add one, so which route is chosen decides this.
+        bool page = SelectedProvider.Id == AiProviders.Copilot && auth == AiAuthKinds.Browser;
+        bool reads = page || SelectedProvider.SupportsPictures;
+
         _aiPictures.Enabled = reads;
-        _aiPictureNote.Text = reads
-            ? "This is what makes the steps genuinely good, because the picture shows what a"
-              + " browser or an application never reports. The picture for each step is sent to"
-              + " the service chosen above, and nowhere else."
-            : SelectedProvider.Label + " takes text and nothing else. With this on, Stepwright"
-              + " reads the words off each screenshot here on this machine and sends only those"
-              + " words, so the assistant can still name the control that was used. No picture"
-              + " leaves the machine either way.";
+        _aiPictureNote.Text = page
+            ? "Through the page, Copilot can be shown the screenshot itself: Stepwright attaches"
+              + " it to the message the way you would attach a picture yourself. That is what lets"
+              + " it name what is really on screen. It is slower than sending words alone, because"
+              + " every step carries a picture up before the question goes."
+            : reads
+                ? "This is what makes the steps genuinely good, because the picture shows what a"
+                  + " browser or an application never reports. The picture for each step is sent to"
+                  + " the service chosen above, and nowhere else."
+                : SelectedProvider.Label + " takes text and nothing else. With this on, Stepwright"
+                  + " reads the words off each screenshot here on this machine and sends only those"
+                  + " words, so the assistant can still name the control that was used. No picture"
+                  + " leaves the machine either way.";
 
         AiAgent? agent = AiAgents.Find(SelectedProvider.Id);
 

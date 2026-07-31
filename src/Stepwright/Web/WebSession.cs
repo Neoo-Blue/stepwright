@@ -359,6 +359,64 @@ public sealed class WebSession : IDisposable
         }
     }
 
+    /// <summary>
+    /// Hands files to the page as though a person had chosen them in the file dialog. The dialog
+    /// never opens: the browser is told directly which files the box now holds, which is how this
+    /// is done without a native window appearing that nobody could close.
+    ///
+    /// The script has to hand back the file box itself, not a description of it, so this asks the
+    /// browser for a handle to the element rather than for its value.
+    /// </summary>
+    public async Task<bool> AttachAsync(string findScript, IReadOnlyList<string> paths, CancellationToken token)
+    {
+        await ReadyAsync().ConfigureAwait(true);
+
+        JsonNode? found = await CdpAsync(
+            "Runtime.evaluate",
+            new JsonObject
+            {
+                ["expression"] = findScript,
+                ["awaitPromise"] = true,
+                ["returnByValue"] = false,
+            },
+            token).ConfigureAwait(true);
+
+        string? handle = found?["result"]?["objectId"]?.GetValue<string>();
+
+        if (string.IsNullOrEmpty(handle))
+        {
+            return false;
+        }
+
+        JsonNode? node = await CdpAsync(
+            "DOM.requestNode",
+            new JsonObject { ["objectId"] = handle },
+            token).ConfigureAwait(true);
+
+        int nodeId = node?["nodeId"]?.GetValue<int>() ?? 0;
+
+        if (nodeId == 0)
+        {
+            return false;
+        }
+
+        var files = new JsonArray();
+
+        foreach (string path in paths)
+        {
+            files.Add(path);
+        }
+
+        JsonNode? set = await CdpAsync(
+            "DOM.setFileInputFiles",
+            new JsonObject { ["files"] = files, ["nodeId"] = nodeId },
+            token).ConfigureAwait(true);
+
+        // The browser answers an accepted call with an empty object and a refused one with an
+        // error, so the absence of an error is the confirmation.
+        return set is not null && set["error"] is null;
+    }
+
     /// <summary>A true left click at a point, in the page's own coordinates.</summary>
     public async Task ClickAsync(double x, double y, CancellationToken token)
     {

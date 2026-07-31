@@ -54,7 +54,7 @@ public static class AiPolisher
 
         // Not every service can be shown a picture. Copilot takes text and nothing else, so the
         // switch is honoured where it can be and the text pass is used where it cannot.
-        return settings.AiSendScreenshots && AiProviders.Find(settings.AiProvider).SupportsPictures
+        return settings.AiSendScreenshots && AiProviders.CanSendPictures(settings)
             ? await WithPicturesAsync(guide, settings, targets, pictureFor, progress, token).ConfigureAwait(true)
             : await FromTextAsync(guide, settings, targets, progress, token, wordsFor).ConfigureAwait(true);
     }
@@ -470,7 +470,7 @@ public static class AiPolisher
         IProgress<string>? progress,
         CancellationToken token)
     {
-        if (!AiProviders.Find(settings.AiProvider).SupportsPictures)
+        if (!AiProviders.CanSendPictures(settings))
         {
             throw new InvalidOperationException(
                 AiProviders.Find(settings.AiProvider).Label

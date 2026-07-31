@@ -52,7 +52,7 @@ public static class AiClient
             }
 
             return await CopilotWeb
-                .AskAsync(settings.AiCopilotWork, system + "\n\n" + user, token)
+                .AskAsync(settings.AiCopilotWork, system + "\n\n" + user, token, pictures)
                 .ConfigureAwait(false);
         }
 

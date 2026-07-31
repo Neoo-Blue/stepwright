@@ -21,6 +21,21 @@ public sealed class AiProvider
 
 public static class AiProviders
 {
+    /// <summary>
+    /// Whether a picture can be sent, for the way this service is actually being reached. Copilot
+    /// is the one that differs: its programming interface takes text and nothing else, but its
+    /// page takes an attachment the way a person would add one, so the same service can see a
+    /// screenshot through the browser and cannot through the interface.
+    /// </summary>
+    public static bool CanSendPictures(Config.AppSettings settings)
+    {
+        AiProvider provider = Find(settings.AiProvider);
+
+        return provider.Id == Copilot
+            ? AiAuthKinds.Clean(settings.AiAuth) == AiAuthKinds.Browser
+            : provider.SupportsPictures;
+    }
+
     public const string OpenAi = "openai";
     public const string Anthropic = "anthropic";
     public const string Gemini = "gemini";
