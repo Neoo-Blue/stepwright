@@ -120,6 +120,13 @@ public sealed class AppSettings
     public string HuduKeyProtected { get; set; } = string.Empty;
     public string HuduFormat { get; set; } = "Hudu";
 
+    /// <summary>
+    /// How a guide reaches Hudu. "key" uses the API and an administrator minted key, which is
+    /// reliable. "web" drives the Hudu web page in a signed in browser and needs no key at all,
+    /// for a technician who cannot mint one, at the cost of being the more fragile of the two.
+    /// </summary>
+    public string HuduPublish { get; set; } = "key";
+
     public string ConfluenceSite { get; set; } = string.Empty;
     public string ConfluenceEmail { get; set; } = string.Empty;
     public string ConfluenceTokenProtected { get; set; } = string.Empty;
@@ -402,6 +409,16 @@ public sealed class AppSettings
 
     [JsonIgnore]
     public bool HasHudu => !string.IsNullOrWhiteSpace(HuduBaseUrl) && !string.IsNullOrEmpty(HuduKeyProtected);
+
+    /// <summary>True when Hudu is set to publish by driving its web page rather than by the key.</summary>
+    [JsonIgnore]
+    public bool HuduUsesWeb => string.Equals(HuduPublish, "web", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>True when Hudu can publish at all, by whichever route it is set to.</summary>
+    [JsonIgnore]
+    public bool CanPublishHudu => HuduUsesWeb
+        ? !string.IsNullOrWhiteSpace(HuduBaseUrl)
+        : HasHudu;
 
     [JsonIgnore]
     public bool ConfluenceUsesOAuth =>

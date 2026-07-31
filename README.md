@@ -244,6 +244,12 @@ there for a company that would rather approve an application once and be done.
 window. Stepwright takes the key off the page itself. Hudu mints keys for administrators only and
 nothing can change that, but the finding, the copying and the pasting are gone.
 
+For a technician who cannot mint a key at all, Hudu has a second, advanced route under Settings:
+publish through the Hudu web page with no key. Stepwright opens Hudu, waits until you start a new
+article in the company you want, fills in the title and the guide, and leaves you to look it over
+and press Save. It is the more fragile of the two, because it reads Hudu's own page, so the key
+route stays the reliable default.
+
 What is kept for the two browser routes is what a browser keeps: a signed in profile, one folder
 per service, under your own Windows account. No password passes through Stepwright, and signing
 out deletes the folder.

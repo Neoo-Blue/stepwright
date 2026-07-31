@@ -2646,7 +2646,7 @@ public sealed class MainForm : Form
             return;
         }
 
-        bool ready = destination == PublishDestination.Hudu ? _settings.HasHudu : _settings.HasConfluence;
+        bool ready = destination == PublishDestination.Hudu ? _settings.CanPublishHudu : _settings.HasConfluence;
 
         if (!ready)
         {

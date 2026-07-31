@@ -184,6 +184,15 @@ public sealed class PublishForm : Form
         return footer;
     }
 
+    /// <summary>Hides the company and folder pickers, for the web route that has no list to fill them.</summary>
+    private void HidePickers()
+    {
+        foreach (Control control in new Control[] { _first, _second, _third, _firstLabel, _secondLabel, _thirdLabel })
+        {
+            control.Visible = false;
+        }
+    }
+
     // ------------------------------------------------------------------ loading
 
     private async Task LoadTargetsAsync()
@@ -198,6 +207,28 @@ public sealed class PublishForm : Form
 
             if (_destination == PublishDestination.Hudu)
             {
+                // The web route has no key, so there is no list to ask for: the person picks the
+                // company in the Hudu window. The pickers are hidden and the send goes straight on.
+                if (_settings.HuduUsesWeb)
+                {
+                    if (string.IsNullOrWhiteSpace(_settings.HuduBaseUrl))
+                    {
+                        Say("Add your Hudu address under Settings first.", Theme.Record);
+                        return;
+                    }
+
+                    if (!Web.HuduWeb.Remembered)
+                    {
+                        Say("Sign in to Hudu under Settings first, then come back.", Theme.Record);
+                        return;
+                    }
+
+                    HidePickers();
+                    _send.Enabled = true;
+                    Say("Ready. You will choose where it goes in the Hudu window.", Theme.Good);
+                    return;
+                }
+
                 if (!_settings.HasHudu)
                 {
                     Say("Hudu is not set up yet. Add the address and a key under Settings.", Theme.Record);
@@ -316,7 +347,20 @@ public sealed class PublishForm : Form
 
             using var cancel = new CancellationTokenSource(TimeSpan.FromMinutes(10));
 
-            if (_destination == PublishDestination.Hudu && _hudu is not null)
+            if (_destination == PublishDestination.Hudu && _settings.HuduUsesWeb)
+            {
+                _link = await Web.HuduWeb.PublishAsync(
+                    _settings.HuduBaseUrl,
+                    title,
+                    html,
+                    message => Say(message, Theme.Muted),
+                    cancel.Token).ConfigureAwait(true);
+
+                _settings.HuduFormat = format.Name;
+
+                Say("Done in the window. If you saved it in Hudu, it is published.", Theme.Good);
+            }
+            else if (_destination == PublishDestination.Hudu && _hudu is not null)
             {
                 // Named out loud, because one Hudu key reaches every company on the instance
                 // and the only thing standing between customers is this list.

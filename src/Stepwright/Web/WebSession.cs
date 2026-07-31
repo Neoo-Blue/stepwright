@@ -131,6 +131,92 @@ public sealed class WebSession : IDisposable
     }
 
     /// <summary>
+    /// Shows the browser and helps rather than drives. It opens the page, and once the thing the
+    /// fill script is waiting for appears, it fills it in, then leaves the window open so the
+    /// person can look it over and save it themselves. The last two acts, the review and the
+    /// save, are deliberately left to the person, because those are the acts that would do harm
+    /// if a script got them wrong.
+    ///
+    /// The fill script is run again every second or so until it reports that it has done its
+    /// work. What it does before then is its own business; all this waits for is a JSON object
+    /// with filled set to true.
+    /// </summary>
+    public async Task<string> AssistAsync(
+        IWin32Window? owner,
+        string address,
+        string title,
+        string fillScript,
+        Action<string>? note,
+        CancellationToken token)
+    {
+        await ReadyAsync().ConfigureAwait(true);
+
+        _window = new Form
+        {
+            Text = title,
+            StartPosition = FormStartPosition.CenterParent,
+            ClientSize = new Size(1100, 820),
+            MinimizeBox = false,
+            ShowIcon = false,
+        };
+
+        _view!.Dock = DockStyle.Fill;
+        _window.Controls.Add(_view);
+
+        bool filled = false;
+        bool busy = false;
+
+        using var ticker = new System.Windows.Forms.Timer { Interval = 1200 };
+
+        ticker.Tick += async (_, _) =>
+        {
+            if (filled || busy || token.IsCancellationRequested)
+            {
+                return;
+            }
+
+            busy = true;
+
+            try
+            {
+                JsonNode? answer = await RunAsync(fillScript, token).ConfigureAwait(true);
+
+                if (answer?["filled"]?.GetValue<bool>() ?? false)
+                {
+                    filled = true;
+                    ticker.Stop();
+                    note?.Invoke("Filled in. Look it over in the window, then save it in Hudu and close the window.");
+                }
+            }
+            catch
+            {
+                // A page still settling throws until it is ready. The next tick tries again.
+            }
+            finally
+            {
+                busy = false;
+            }
+        };
+
+        _view.CoreWebView2.Navigate(address);
+        ticker.Start();
+
+        try
+        {
+            _window.ShowDialog(owner);
+        }
+        finally
+        {
+            ticker.Stop();
+            _window.Controls.Remove(_view);
+            _window.Dispose();
+            _window = null;
+        }
+
+        return _view.Source?.ToString() ?? string.Empty;
+    }
+
+    /// <summary>
     /// Brings the browser up without showing it, for the runs after the first one. Nothing here
     /// signs anybody in: if the profile has gone stale the page will simply be a sign in page,
     /// and the caller is expected to notice and ask.

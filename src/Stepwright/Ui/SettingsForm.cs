@@ -74,6 +74,8 @@ public sealed class SettingsForm : Form
 
     private readonly TextBox _huduUrl = new();
     private readonly TextBox _huduKey = new();
+    private readonly ComboBox _huduPublish = new();
+    private readonly Label _huduWebNote = new();
     private readonly Label _huduResult = new();
     private readonly ComboBox _confluenceAuth = new();
     private readonly TextBox _confluenceSite = new();
@@ -1292,6 +1294,13 @@ public sealed class SettingsForm : Form
         _huduUrl.Text = _settings.HuduBaseUrl;
         AddField(table, "Address of your site, for example https://help.yourcompany.com", _huduUrl);
 
+        _huduPublish.DropDownStyle = ComboBoxStyle.DropDownList;
+        _huduPublish.Items.Add("An API key, reliable");
+        _huduPublish.Items.Add("The Hudu web page, no key, advanced");
+        _huduPublish.SelectedIndex = _settings.HuduUsesWeb ? 1 : 0;
+        _huduPublish.SelectedIndexChanged += (_, _) => ShowHuduRoute();
+        AddField(table, "How it publishes", _huduPublish);
+
         _huduKey.UseSystemPasswordChar = true;
         _huduKey.Text = string.IsNullOrEmpty(_settings.HuduKeyProtected) ? string.Empty : new string('*', 24);
         _huduKey.TextChanged += (_, _) => _huduKeyEdited = true;
@@ -1303,6 +1312,20 @@ public sealed class SettingsForm : Form
             + " on, so treat it as you would an administrator password. The company a guide goes"
             + " to is the one chosen on the publishing window, and it is named there before"
             + " anything is sent.");
+
+        _huduWebNote.AutoSize = true;
+        _huduWebNote.MaximumSize = new Size(580, 0);
+        _huduWebNote.ForeColor = Theme.Muted;
+        _huduWebNote.Font = Theme.UiSmall;
+        _huduWebNote.Margin = new Padding(1, 0, 0, 8);
+        _huduWebNote.BackColor = Color.Transparent;
+        _huduWebNote.Text =
+            "The web page route needs no key. Sign in to Hudu once with the button below, and when"
+            + " you publish, Stepwright opens Hudu, waits for you to start a new article in the"
+            + " company you want, fills in the title and the guide, and leaves you to look it over"
+            + " and press Save. It is the more fragile of the two and depends on the Hudu page"
+            + " staying roughly as it is, so it is for a technician who cannot mint a key.";
+        table.Controls.Add(_huduWebNote);
 
         var huduRow = new FlowLayoutPanel
         {
@@ -1325,6 +1348,8 @@ public sealed class SettingsForm : Form
         _huduResult.ForeColor = Theme.Muted;
         _huduResult.Margin = new Padding(0, 6, 0, 4);
         table.Controls.Add(_huduResult);
+
+        ShowHuduRoute();
 
         AddHeading(table, "Confluence");
 
@@ -1775,6 +1800,15 @@ public sealed class SettingsForm : Form
     /// person to carry it across. Hudu only mints keys for administrators, and nothing here can
     /// change that, but everything else about the setup goes away.
     /// </summary>
+    /// <summary>Shows the key field or the web note depending on how Hudu is set to publish.</summary>
+    private void ShowHuduRoute()
+    {
+        bool web = _huduPublish.SelectedIndex == 1;
+
+        _huduKey.Enabled = !web;
+        _huduWebNote.Visible = web;
+    }
+
     private async Task SignInHuduAsync()
     {
         if (!WebSession.Available)
@@ -2168,6 +2202,7 @@ public sealed class SettingsForm : Form
         _settings.ExportFormat = _exportFormat.SelectedItem as string ?? "Stepwright";
 
         _settings.HuduBaseUrl = _huduUrl.Text.Trim();
+        _settings.HuduPublish = _huduPublish.SelectedIndex == 1 ? "web" : "key";
         if (_huduKeyEdited)
         {
             _settings.SetHuduKey(_huduKey.Text.Trim());
