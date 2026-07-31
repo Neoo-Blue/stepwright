@@ -256,85 +256,10 @@ public static class CopilotWeb
             return { stage: 'compose', error: 'The page may still be loading, or it keeps the chat inside a part this cannot reach.' };
           }
 
-          const before = transcript();
+          const norm = s => (s || '').replace(/\s+/g, ' ').trim();
+          const q1 = norm(question);
 
-          box.focus();
-          try { box.scrollIntoView({ block: 'center' }); } catch (e) {}
-
-          const type = () => {
-            if (box.isContentEditable) {
-              try { document.execCommand('selectAll', false, null); } catch (e) {}
-              const ok = (() => { try { return document.execCommand('insertText', false, question); } catch (e) { return false; } })();
-              if (!ok) {
-                box.textContent = question;
-              }
-            } else {
-              const proto = box.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
-              const setter = Object.getOwnPropertyDescriptor(proto, 'value').set;
-              setter.call(box, question);
-            }
-            box.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: question }));
-          };
-
-          type();
-          await sleep(500);
-
-          const key = name => box.dispatchEvent(new KeyboardEvent(name, {
-            key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true,
-          }));
-
-          key('keydown'); key('keypress'); key('keyup');
-
-          await sleep(1500);
-
-          // Nothing moved, so this page does not send on Enter. Find the send button, which sits
-          // right by the box and is enabled only once there is something to send.
-          const grew = () => transcript().length > before.length + 8;
-
-          if (!grew()) {
-            const send = deep().filter(b => {
-              if (b.tagName !== 'BUTTON' && !(b.getAttribute && b.getAttribute('role') === 'button')) return false;
-              if (!visible(b) || b.disabled || b.getAttribute('aria-disabled') === 'true') return false;
-              const label = ((b.getAttribute('aria-label') || '') + ' ' + (b.title || '') + ' ' + (b.textContent || '') + ' ' + (b.getAttribute('data-testid') || '')).toLowerCase();
-              return /send|submit/.test(label);
-            }).pop();
-
-            if (send) {
-              send.click();
-            } else {
-              return { stage: 'send', error: 'The Enter key did nothing and no send button could be found.' };
-            }
-          }
-
-          await sleep(1500);
-
-          // 2. Wait for the answer to appear and then to stop growing. An answer still being
-          //    written keeps the page changing; a finished one goes still.
-          let last = '';
-          let still = 0;
-          const until = Date.now() + 150000;
-
-          while (Date.now() < until) {
-            await sleep(900);
-            const now = transcript();
-
-            if (now === last && now.length > before.length + 8) {
-              still += 1;
-              if (still >= 4) break;
-            } else {
-              still = 0;
-            }
-
-            last = now;
-          }
-
-          let after = transcript();
-
-          if (after.length <= before.length + 8) {
-            return { stage: 'answer', error: 'The question was sent but nothing new appeared within the wait.' };
-          }
-
-          const strip = s => {
+          const stripChrome = s => {
             const chrome = [
               /copilot can make mistakes[\s\S]*$/i,
               /ai-generated content may be incorrect[\s\S]*$/i,
@@ -345,38 +270,117 @@ public static class CopilotWeb
             return s.trim();
           };
 
-          const needle = question.slice(0, Math.min(48, question.length));
-          const shortNeedle = question.slice(0, Math.min(24, question.length));
+          // The readable blocks of the page: visible chunks of text that are not the composer, a
+          // button or a menu, and that hold their own text rather than wrapping other blocks.
+          // Reading these and taking only the ones that are new is what keeps the answer from
+          // being lost among the suggestions, the sidebar and the person's own name, which is
+          // exactly what went wrong before.
+          const blocks = () => {
+            const out = [];
+            for (const el of deep()) {
+              if (!visible(el)) continue;
+              const tag = el.tagName;
+              if (tag === 'BUTTON' || tag === 'A' || tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'NAV' || tag === 'LI') continue;
+              if (el.isContentEditable) continue;
+              try { if (el.closest && el.closest('nav,[role="navigation"],[role="list"],[role="listbox"],header,footer')) continue; } catch (e) {}
+              let t;
+              try { t = norm(el.innerText); } catch (e) { continue; }
+              if (t.length < 2 || t.length > 8000) continue;
+              let wrapper = false;
+              for (const c of el.children) {
+                let ct = '';
+                try { ct = norm(c.innerText); } catch (e) {}
+                if (ct.length >= t.length * 0.9) { wrapper = true; break; }
+              }
+              if (wrapper) continue;
+              out.push(t);
+            }
+            return out;
+          };
 
-          // The composer very often keeps the question sitting at the bottom of the page after
-          // it is sent, so an occurrence of it at the very end is that box, not a turn in the
-          // transcript. Cut a trailing copy off before looking for the answer.
-          const trailing = after.lastIndexOf(shortNeedle);
-          if (trailing > after.length - question.length - 80) {
-            after = after.slice(0, trailing);
+          const isQuestion = t => t === q1 || (q1.length > 10 && t.indexOf(q1.slice(0, Math.min(30, q1.length))) === 0);
+
+          // The answer is the largest block that is new since the question was sent and is not
+          // the question read back. Largest, because a real answer is the substantial new thing
+          // on the page and the leftover chrome that changes is small.
+          const answerFrom = seen => {
+            const fresh = blocks().filter(t => !seen.has(t) && !isQuestion(t));
+            if (!fresh.length) return '';
+            fresh.sort((a, b) => a.length - b.length);
+            return stripChrome(fresh[fresh.length - 1]);
+          };
+
+          const before = new Set(blocks());
+
+          box.focus();
+          try { box.scrollIntoView({ block: 'center' }); } catch (e) {}
+
+          // Typed as one line, so a newline is never read as a send and the question reads back
+          // the same way it was sent.
+          const type = () => {
+            if (box.isContentEditable) {
+              try { document.execCommand('selectAll', false, null); } catch (e) {}
+              const ok = (() => { try { return document.execCommand('insertText', false, q1); } catch (e) { return false; } })();
+              if (!ok) { box.textContent = q1; }
+            } else {
+              const proto = box.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+              const setter = Object.getOwnPropertyDescriptor(proto, 'value').set;
+              setter.call(box, q1);
+            }
+            box.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: q1 }));
+          };
+
+          type();
+          await sleep(600);
+
+          const press = name => box.dispatchEvent(new KeyboardEvent(name, {
+            key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true,
+          }));
+
+          press('keydown'); press('keypress'); press('keyup');
+
+          await sleep(1800);
+
+          // Did the question go? A sent question shows up as a new block. If not, this page does
+          // not send on Enter, so find the send button and click it.
+          const sent = () => blocks().some(t => !before.has(t) && isQuestion(t));
+
+          if (!sent()) {
+            const button = deep().filter(b => {
+              if (b.tagName !== 'BUTTON' && !(b.getAttribute && b.getAttribute('role') === 'button')) return false;
+              if (!visible(b) || b.disabled || b.getAttribute('aria-disabled') === 'true') return false;
+              const label = ((b.getAttribute('aria-label') || '') + ' ' + (b.title || '') + ' ' + (b.textContent || '') + ' ' + (b.getAttribute('data-testid') || '')).toLowerCase();
+              return /send|submit/.test(label);
+            }).pop();
+            if (button) { button.click(); }
           }
 
-          // The answer is the text that follows the most recent real occurrence of the question.
-          // Walk occurrences from the last backwards and take the first that leaves something.
-          const spots = [];
-          let idx = after.indexOf(needle);
-          while (idx !== -1) { spots.push(idx); idx = after.indexOf(needle, idx + 1); }
-
+          // Wait for the answer to appear and then hold still. An answer still being written keeps
+          // changing; a finished one stops.
           let text = '';
-          for (let k = spots.length - 1; k >= 0; k--) {
-            const candidate = strip(after.slice(spots[k] + needle.length));
-            if (candidate.length > 0) { text = candidate; break; }
+          let steady = '';
+          let still = 0;
+          const until = Date.now() + 150000;
+
+          while (Date.now() < until) {
+            await sleep(1000);
+            const now = answerFrom(before);
+            if (now && now === steady) {
+              still += 1;
+              if (still >= 3) { text = now; break; }
+            } else {
+              still = 0;
+            }
+            steady = now;
           }
 
-          // Nothing keyed off the question. Fall back to whatever is new since before it was sent.
-          if (!text && after.length > before.length) {
-            text = strip(after.slice(before.length));
-          }
+          if (!text) { text = answerFrom(before); }
 
           if (!text) {
-            // Hand back a look at the tail of the page, so a report of this says what the page
-            // actually held where the answer was expected.
-            return { stage: 'answer', error: 'new text appeared but the answer could not be told apart from it', sample: after.slice(-280) };
+            // Show the blocks that are new, so a report of this says what actually appeared rather
+            // than the furniture around it.
+            const fresh = blocks().filter(t => !before.has(t));
+            return { stage: 'answer', error: 'nothing that reads as an answer appeared', sample: fresh.slice(-6).join(' | ').slice(0, 280) };
           }
 
           return { text: text };

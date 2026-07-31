@@ -415,8 +415,16 @@ public static class AiPolisher
     /// <summary>Sends one tiny request so the settings screen can prove the endpoint works.</summary>
     public static async Task<string> TestAsync(AppSettings settings, CancellationToken token)
     {
+        // A whole distinctive line rather than a single word, because the page routes find the
+        // answer by looking for the substantial new thing on the page, and a one word reply can
+        // be outweighed by a suggestion chip that happens to be longer.
         string reply = await AiClient
-            .CompleteAsync(settings, "Reply with the single word ready.", "ping", null, token)
+            .CompleteAsync(
+                settings,
+                "Reply with exactly this line and nothing else: Stepwright connection confirmed.",
+                "ping",
+                null,
+                token)
             .ConfigureAwait(true);
 
         return string.IsNullOrWhiteSpace(reply) ? "The endpoint answered but sent no text." : reply.Trim();
