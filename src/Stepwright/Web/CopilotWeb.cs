@@ -113,30 +113,65 @@ public static class CopilotWeb
             double x = prepared["x"]?.GetValue<double>() ?? 0;
             double y = prepared["y"]?.GetValue<double>() ?? 0;
 
+            string asked = Flatten(question);
+
             await Session.ClickAsync(x, y, token).ConfigureAwait(true);
             await Task.Delay(200, token).ConfigureAwait(true);
-            await Session.TypeAsync(Flatten(question), token).ConfigureAwait(true);
+            await Session.TypeAsync(asked, token).ConfigureAwait(true);
 
-            // The page has to be given a moment to notice the text, because the send button only
-            // arms once it has, and what is on the page is only worth noting once the question is
-            // in the box: the greeting under the box is rewritten every so often, and a note taken
-            // any earlier would call the new greeting an answer.
-            await Task.Delay(900, token).ConfigureAwait(true);
+            // A long step carries a long question, and a long question takes the editor longer to
+            // take in. Waiting a flat moment was enough for a short one and not for a real one,
+            // which is why this worked and then did not. The wait grows with the question.
+            int settle = Math.Min(6000, 700 + (asked.Length / 2));
+            await Task.Delay(settle, token).ConfigureAwait(true);
+
+            // What is on the page is noted once the question is in the box, because the greeting
+            // under it is rewritten every so often and a note taken earlier would call the new
+            // greeting an answer.
             await Session.RunAsync(NoteScript(), token).ConfigureAwait(true);
 
-            await Session.EnterAsync(token).ConfigureAwait(true);
-            await Task.Delay(1200, token).ConfigureAwait(true);
-
-            // The Enter is not always what sends. When the question is still sitting in the box,
-            // the send button is pressed, and pressed truly, with a real click at its own place,
-            // because a button in this page ignores a click a script merely calls for.
-            JsonNode? pending = await Session.RunAsync(SendButtonScript(question), token).ConfigureAwait(true);
-
-            if (pending?["needed"]?.GetValue<bool>() == true && pending["x"] is not null)
+            // Sending is tried rather than assumed. Each round asks the page what actually
+            // happened: whether the words are in the box at all, and whether the question has
+            // posted. Nothing here is taken on trust, because every failure so far has been a
+            // step that was assumed to have worked.
+            for (int round = 0; round < 3; round++)
             {
-                await Session
-                    .ClickAsync(pending["x"]!.GetValue<double>(), pending["y"]!.GetValue<double>(), token)
-                    .ConfigureAwait(true);
+                JsonNode? state = await Session.RunAsync(StateScript(question), token).ConfigureAwait(true);
+
+                if (state?["posted"]?.GetValue<bool>() == true)
+                {
+                    break;
+                }
+
+                // The words never landed, so they are typed again rather than sending an empty box.
+                if (state?["inBox"]?.GetValue<bool>() != true)
+                {
+                    await Session.ClickAsync(x, y, token).ConfigureAwait(true);
+                    await Task.Delay(200, token).ConfigureAwait(true);
+                    await Session.TypeAsync(asked, token).ConfigureAwait(true);
+                    await Task.Delay(settle, token).ConfigureAwait(true);
+                }
+
+                await Session.EnterAsync(token).ConfigureAwait(true);
+                await Task.Delay(1500, token).ConfigureAwait(true);
+
+                JsonNode? after = await Session.RunAsync(StateScript(question), token).ConfigureAwait(true);
+
+                if (after?["posted"]?.GetValue<bool>() == true)
+                {
+                    break;
+                }
+
+                // The Enter was not what sends here. The send button is pressed truly, with a real
+                // click at its own place, because this page ignores a click a script calls for.
+                if (after?["x"] is not null)
+                {
+                    await Session
+                        .ClickAsync(after["x"]!.GetValue<double>(), after["y"]!.GetValue<double>(), token)
+                        .ConfigureAwait(true);
+
+                    await Task.Delay(1500, token).ConfigureAwait(true);
+                }
             }
         }
 
@@ -487,22 +522,45 @@ public static class CopilotWeb
         """;
 
     /// <summary>
-    /// Says whether the question is still sitting in the box, and where the send button is if it
-    /// is. The button is found by what it is for rather than by its name alone, so an icon with
-    /// nothing but a label still counts.
+    /// Says what actually happened: whether the words are in the box, whether the question has
+    /// posted as a turn of its own, and where the send button is. Everything the sending does is
+    /// decided by this rather than by assuming the last act worked.
     /// </summary>
-    private static string SendButtonScript(string question)
+    private static string StateScript(string question)
     {
         string asked = JsonSerializer.Serialize(question);
 
         return "(async () => {" + Helpers + """
           const q1 = norm(__QUESTION__);
           const before = new Set(window.__swBefore || []);
+          const head = q1.slice(0, Math.min(30, q1.length));
 
-          const posted = blocks().some(t => !before.has(t)
-            && (t === q1 || (q1.length > 10 && t.indexOf(q1.slice(0, Math.min(30, q1.length))) === 0)));
+          // The question has posted when the page shows it as a turn, which it marks, or when an
+          // answer is already there to be read.
+          const asked2 = deep().filter(el => {
+            const id = el.getAttribute && (el.getAttribute('data-testid') || el.getAttribute('data-test-id'));
+            return id === 'chatOutput' || id === 'copilot-message-div';
+          });
 
-          if (posted) { return { needed: false }; }
+          let posted = asked2.some(el => {
+            let t = ''; try { t = norm(el.innerText); } catch (e) {}
+            return t.length > 0 && (t === q1 || (q1.length > 10 && t.indexOf(head) === 0)
+              || (el.getAttribute('data-testid') === 'copilot-message-div' && t.length > 12));
+          });
+
+          if (!posted) {
+            posted = blocks().some(t => !before.has(t) && (t === q1 || (q1.length > 10 && t.indexOf(head) === 0)));
+          }
+
+          // Whether the words are actually sitting in the box, so an empty box is never sent.
+          const box = composer();
+          let inBox = false;
+          if (box) {
+            let t = ''; try { t = norm(box.innerText || box.value || ''); } catch (e) {}
+            inBox = t.length > 8 && (t.indexOf(head) >= 0 || q1.indexOf(t.slice(0, 30)) >= 0);
+          }
+
+          if (posted) { return { posted: true, inBox: inBox }; }
 
           const buttons = deep().filter(b => {
             if (b.tagName !== 'BUTTON' && !(b.getAttribute && b.getAttribute('role') === 'button')) return false;
@@ -516,13 +574,13 @@ public static class CopilotWeb
             return /send|submit/.test(l);
           });
 
-          if (!buttons.length) { return { needed: true, error: 'no send button could be found' }; }
+          if (!buttons.length) { return { posted: false, inBox: inBox }; }
 
           // The one lowest on the page is the one by the box, rather than one in a menu above it.
           buttons.sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top);
-          const box = buttons[buttons.length - 1].getBoundingClientRect();
+          const at = buttons[buttons.length - 1].getBoundingClientRect();
 
-          return { needed: true, x: box.left + box.width / 2, y: box.top + box.height / 2 };
+          return { posted: false, inBox: inBox, x: at.left + at.width / 2, y: at.top + at.height / 2 };
         })()
         """.Replace("__QUESTION__", asked, StringComparison.Ordinal);
     }
