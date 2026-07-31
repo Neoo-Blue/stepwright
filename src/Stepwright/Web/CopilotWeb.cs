@@ -92,15 +92,19 @@ public static class CopilotWeb
             return "The page returned nothing at all.";
         }
 
-        if (dumped["error"]?.GetValue<string>() is string failed)
-        {
-            return "Could not read the page. " + failed;
-        }
-
         var report = new System.Text.StringBuilder();
         report.AppendLine("Stepwright Copilot page report");
         report.AppendLine("Version " + Stepwright.Build.Version);
         report.AppendLine("Question sent: " + question);
+
+        // An error does not end the report. The list of what is on the page is the whole point,
+        // and it is written whether or not the sending worked, so a page with no box to type in
+        // still shows what it does hold.
+        if (dumped["error"]?.GetValue<string>() is string failed)
+        {
+            report.AppendLine("Note: " + failed);
+        }
+
         report.AppendLine("Composer found: " + (dumped["composer"]?.GetValue<bool>() ?? false));
         report.AppendLine("Address: " + (dumped["url"]?.GetValue<string>() ?? string.Empty));
         report.AppendLine();
@@ -226,8 +230,15 @@ public static class CopilotWeb
             return items;
           };
 
-          const box = composer();
-          if (!box) { return { error: 'no composer found', composer: false, url: location.href, items: record(new Set()) }; }
+          // The page builds itself for a while after it loads, so wait for the box the same way
+          // the real run does rather than looking once and giving up.
+          let box = null;
+          const appear = Date.now() + 30000;
+          while (Date.now() < appear) { box = composer(); if (box) break; await sleep(500); }
+
+          if (!box) {
+            return { error: 'no composer found after waiting', composer: false, url: location.href, items: record(new Set()) };
+          }
 
           const beforeItems = record(new Set());
           const before = new Set(beforeItems.map(i => i.text.length >= 160 ? i.text : norm(i.text)));
