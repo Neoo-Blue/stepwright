@@ -70,6 +70,12 @@ public sealed class AppSettings
     /// <summary>The Microsoft application this app signs in through, registered in your tenant.</summary>
     public string AiAppId { get; set; } = string.Empty;
 
+    /// <summary>
+    /// Which Copilot the browser route opens: the one that comes with a work or school account,
+    /// or the personal one. They are different products behind the same name.
+    /// </summary>
+    public bool AiCopilotWork { get; set; } = true;
+
     /// <summary>Blank means any work account. A tenant identifier pins it to one organisation.</summary>
     public string AiTenant { get; set; } = string.Empty;
 
@@ -331,6 +337,7 @@ public sealed class AppSettings
         "cli" => true,
         "token" => HasAiToken,
         "subscription" => HasClaudeSignIn,
+        "browser" => true,
         "microsoft" => HasMicrosoftSignIn,
         _ => HasAiKey || (AiBaseUrl ?? string.Empty).Contains("localhost", StringComparison.OrdinalIgnoreCase),
     };

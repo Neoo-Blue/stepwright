@@ -211,6 +211,29 @@ for your Windows account with the platform data protection interface.
 Press **Find models** and Stepwright asks that service which models your key is actually allowed
 to use, then fills the list. You can still type a name yourself.
 
+### Signing in instead of setting up
+
+Three of the connections now start with a sign in and nothing else.
+
+**Claude.** Press sign in, sign in to Claude in the browser, paste back the one line it shows.
+Nothing to install, nothing to register, and the work is paid for by the Claude plan you already
+have. Stepwright renews it from then on.
+
+**Copilot.** Press sign in, sign in to Copilot in the window that opens, close it. No application
+registered with Microsoft and no administrator asked, because as far as Microsoft is concerned
+nothing here is an application: it is you, signed in, using your own licence. Stepwright then puts
+its question into that page and reads the answer back. It is slower than a key and it depends on
+that page staying roughly as it is, which is the trade being made. The work account route is still
+there for a company that would rather approve an application once and be done.
+
+**Hudu.** Press sign in, sign in to Hudu, create a key on the page it opens for you, and close the
+window. Stepwright takes the key off the page itself. Hudu mints keys for administrators only and
+nothing can change that, but the finding, the copying and the pasting are gone.
+
+What is kept for the two browser routes is what a browser keeps: a signed in profile, one folder
+per service, under your own Windows account. No password passes through Stepwright, and signing
+out deletes the folder.
+
 ### Making it one press
 
 Every service here can be connected two ways. Either the company registers its own application

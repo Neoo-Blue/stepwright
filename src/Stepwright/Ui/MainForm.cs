@@ -2,6 +2,7 @@ using System.Text;
 using Stepwright.Ai;
 using Stepwright.Capture;
 using Stepwright.Config;
+using Stepwright.Web;
 using Stepwright.Export;
 using Stepwright.Model;
 using Stepwright.Native;
@@ -51,6 +52,11 @@ public sealed class MainForm : Form
     public MainForm(AppSettings settings)
     {
         _settings = settings;
+
+        // The embedded browser is a window, so everything that touches it has to come back to
+        // this thread. This is the only place that knows which thread that is.
+        UiThread.Attach(this);
+
         _recorder = new Recorder(settings);
         _recorder.StepAdded += OnStepAdded;
         _recorder.StepChanged += OnStepChanged;

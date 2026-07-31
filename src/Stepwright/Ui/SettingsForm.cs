@@ -1,5 +1,6 @@
 using Stepwright.Ai;
 using Stepwright.Config;
+using Stepwright.Web;
 using Stepwright.Model;
 using Stepwright.Publish;
 using Stepwright.Render;
@@ -54,6 +55,8 @@ public sealed class SettingsForm : Form
     private readonly TextBox _aiTenant = new();
     private readonly Label _aiSignedIn = new();
     private readonly Label _aiClaudeSignedIn = new();
+    private readonly Label _aiBrowserSignedIn = new();
+    private readonly ComboBox _aiCopilotKind = new() { DropDownStyle = ComboBoxStyle.DropDownList };
     private readonly Label _aiModelNote = new();
     private readonly Label _aiPictureNote = new();
     private readonly List<string> _authKinds = new();
@@ -87,6 +90,7 @@ public sealed class SettingsForm : Form
     private readonly TableLayoutPanel _aiCliGroup = Group();
     private readonly TableLayoutPanel _aiTokenGroup = Group();
     private readonly TableLayoutPanel _aiSubscriptionGroup = Group();
+    private readonly TableLayoutPanel _aiBrowserGroup = Group();
 
     private Color _chosenMarker;
     private bool _keyEdited;
@@ -317,11 +321,13 @@ public sealed class SettingsForm : Form
         BuildCliGroup();
         BuildTokenGroup();
         BuildSubscriptionGroup();
+        BuildBrowserGroup();
         BuildMicrosoftGroup();
 
         table.Controls.Add(_aiKeyGroup);
         table.Controls.Add(_aiCliGroup);
         table.Controls.Add(_aiSubscriptionGroup);
+        table.Controls.Add(_aiBrowserGroup);
         table.Controls.Add(_aiTokenGroup);
         table.Controls.Add(_aiMicrosoftGroup);
 
@@ -593,6 +599,119 @@ public sealed class SettingsForm : Form
     }
 
     /// <summary>
+    /// Copilot through its own page. There is nothing to register and nobody to ask, because as
+    /// far as Microsoft is concerned nothing here is an application: it is the person, signed in,
+    /// using the licence they already have.
+    /// </summary>
+    private void BuildBrowserGroup()
+    {
+        AddNote(
+            _aiBrowserGroup,
+            "Press sign in, sign in to Copilot in the window that opens exactly as you would in"
+            + " your browser, and close it. That is the whole setup. Nothing is registered with"
+            + " Microsoft, no administrator has to approve anything, and Stepwright never sees"
+            + " your password: what it keeps is what a browser keeps, a signed in profile held"
+            + " under this Windows account.");
+
+        _aiCopilotKind.Items.AddRange(new object[]
+        {
+            "Copilot that comes with my work or school account",
+            "Copilot on my personal account",
+        });
+
+        _aiCopilotKind.SelectedIndex = _settings.AiCopilotWork ? 0 : 1;
+        AddField(_aiBrowserGroup, "Which Copilot", _aiCopilotKind);
+
+        var row = new FlowLayoutPanel
+        {
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            Dock = DockStyle.Fill,
+            Margin = new Padding(0, 0, 0, 8),
+            BackColor = Color.Transparent,
+            WrapContents = false,
+        };
+
+        row.Controls.Add(Action("Sign in to Copilot", async () => await SignInBrowserAsync().ConfigureAwait(true)));
+        row.Controls.Add(Action("Sign out", SignOutBrowser));
+
+        _aiBrowserGroup.Controls.Add(row);
+
+        _aiBrowserSignedIn.AutoSize = true;
+        _aiBrowserSignedIn.MaximumSize = new Size(580, 0);
+        _aiBrowserSignedIn.Font = Theme.UiSmall;
+        _aiBrowserSignedIn.Margin = new Padding(1, 0, 0, 10);
+        _aiBrowserSignedIn.BackColor = Color.Transparent;
+        _aiBrowserGroup.Controls.Add(_aiBrowserSignedIn);
+
+        AddNote(
+            _aiBrowserGroup,
+            "This route reads Copilot's own page, so it is slower than a key and it depends on"
+            + " that page staying roughly as it is. If Microsoft redesigns it enough to break"
+            + " this, Stepwright says so plainly rather than inventing an answer, and the work"
+            + " account route below keeps working.");
+
+        ShowBrowserSignIn();
+    }
+
+    private void ShowBrowserSignIn()
+    {
+        bool ready = CopilotWeb.Remembered;
+
+        _aiBrowserSignedIn.ForeColor = ready ? Theme.Good : Theme.Muted;
+        _aiBrowserSignedIn.Text = ready
+            ? "Signed in on this machine. Stepwright stays signed in until you sign out here."
+            : "Not signed in yet.";
+    }
+
+    private async Task SignInBrowserAsync()
+    {
+        if (!WebSession.Available)
+        {
+            _aiResult.ForeColor = Theme.Record;
+            _aiResult.Text = WebSession.Missing;
+            return;
+        }
+
+        _settings.AiCopilotWork = _aiCopilotKind.SelectedIndex != 1;
+
+        _aiResult.ForeColor = Theme.Muted;
+        _aiResult.Text = "Opening Copilot...";
+
+        try
+        {
+            bool landed = await CopilotWeb
+                .SignInAsync(this, _settings.AiCopilotWork)
+                .ConfigureAwait(true);
+
+            _settings.AiAuth = AiAuthKinds.Browser;
+            _settings.AiProvider = AiProviders.Copilot;
+            _settings.Save();
+
+            ShowBrowserSignIn();
+
+            _aiResult.ForeColor = landed ? Theme.Good : Theme.Muted;
+            _aiResult.Text = landed
+                ? "Signed in. Test the connection to prove it works."
+                : "The window was closed. If you did sign in, test the connection anyway.";
+        }
+        catch (Exception error)
+        {
+            _aiResult.ForeColor = Theme.Record;
+            _aiResult.Text = StepwrightText.Shorten(error.Message, 220);
+        }
+    }
+
+    private void SignOutBrowser()
+    {
+        CopilotWeb.SignOut();
+        ShowBrowserSignIn();
+
+        _aiResult.ForeColor = Theme.Muted;
+        _aiResult.Text = "Signed out of Copilot on this machine.";
+    }
+
+    /// <summary>
     /// Asks for one line of text. The box is wide and the dialog stays put while the person goes
     /// off to the browser and comes back, because that round trip is the whole point of it.
     /// </summary>
@@ -861,6 +980,14 @@ public sealed class SettingsForm : Form
                 : "A key I bought, billed by what it uses");
         }
 
+        // The page route is offered first for Copilot, because it is the only one of the two
+        // that a technician can finish without booking time with an administrator.
+        if (SelectedProvider.Id == AiProviders.Copilot)
+        {
+            _authKinds.Add(AiAuthKinds.Browser);
+            _aiAuth.Items.Add("Sign in to the Copilot page, no administrator needed");
+        }
+
         if (SelectedProvider.Id is AiProviders.Copilot or AiProviders.Foundry)
         {
             _authKinds.Add(AiAuthKinds.Microsoft);
@@ -908,6 +1035,7 @@ public sealed class SettingsForm : Form
         _aiCliGroup.Visible = auth == AiAuthKinds.Cli;
         _aiTokenGroup.Visible = auth == AiAuthKinds.Token;
         _aiSubscriptionGroup.Visible = auth == AiAuthKinds.Subscription;
+        _aiBrowserGroup.Visible = auth == AiAuthKinds.Browser;
         _aiMicrosoftGroup.Visible = auth == AiAuthKinds.Microsoft;
 
         // A service that cannot be shown a picture should not offer to be shown one.
@@ -1079,6 +1207,7 @@ public sealed class SettingsForm : Form
             WrapContents = false,
         };
 
+        huduRow.Controls.Add(Action("Sign in to Hudu", async () => await SignInHuduAsync().ConfigureAwait(true)));
         huduRow.Controls.Add(Action("Test the connection", async () => await TestHuduAsync().ConfigureAwait(true)));
         huduRow.Controls.Add(Action("Open the key page", OpenHuduKeys));
         table.Controls.Add(huduRow);
@@ -1533,6 +1662,53 @@ public sealed class SettingsForm : Form
     }
 
     // ------------------------------------------------------------------ publishing
+
+    /// <summary>
+    /// Signing in to Hudu in a window, and taking the key from the page rather than asking the
+    /// person to carry it across. Hudu only mints keys for administrators, and nothing here can
+    /// change that, but everything else about the setup goes away.
+    /// </summary>
+    private async Task SignInHuduAsync()
+    {
+        if (!WebSession.Available)
+        {
+            _huduResult.ForeColor = Theme.Record;
+            _huduResult.Text = WebSession.Missing;
+            return;
+        }
+
+        try
+        {
+            _huduResult.ForeColor = Theme.Muted;
+            _huduResult.Text = "Opening Hudu...";
+
+            using var cancel = new CancellationTokenSource(TimeSpan.FromMinutes(30));
+
+            string found = await HuduWeb
+                .SignInAsync(this, _huduUrl.Text.Trim(), cancel.Token)
+                .ConfigureAwait(true);
+
+            if (found.Length == 0)
+            {
+                _huduResult.ForeColor = Theme.Muted;
+                _huduResult.Text =
+                    "No key was on the page when the window closed. Create one in Hudu under"
+                    + " Admin then API, leave it on screen, and press Sign in to Hudu again.";
+                return;
+            }
+
+            _huduKey.Text = found;
+            _huduKeyEdited = true;
+
+            _huduResult.ForeColor = Theme.Good;
+            _huduResult.Text = "Key taken from the page. Test the connection to prove it works.";
+        }
+        catch (Exception error)
+        {
+            _huduResult.ForeColor = Theme.Record;
+            _huduResult.Text = StepwrightText.Shorten(error.Message, 220);
+        }
+    }
 
     private async Task TestHuduAsync()
     {

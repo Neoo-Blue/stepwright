@@ -26,12 +26,20 @@ public static class AiAuthKinds
     /// <summary>Signed in with a Microsoft work account, which is how Copilot and Foundry work.</summary>
     public const string Microsoft = "microsoft";
 
+    /// <summary>
+    /// Signed in to the service's own page, in a browser this app keeps. Nothing is registered
+    /// and no administrator is involved, because nothing here is an application as far as the
+    /// service is concerned: it is the person, signed in, the way they always are.
+    /// </summary>
+    public const string Browser = "browser";
+
     public static string Clean(string? value) => value?.ToLowerInvariant() switch
     {
         Cli => Cli,
         Token => Token,
         Subscription => Subscription,
         Microsoft => Microsoft,
+        Browser => Browser,
         _ => Key,
     };
 }

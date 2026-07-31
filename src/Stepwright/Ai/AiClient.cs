@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using Stepwright.Config;
+using Stepwright.Web;
 
 namespace Stepwright.Ai;
 
@@ -39,6 +40,22 @@ public static class AiClient
 
         // A sign in made in this app and a token pasted from elsewhere reach the service the
         // same way. The difference is that the first one renews itself.
+        // The page route never builds a request at all. The person's own browser does the asking,
+        // so there is no address, no key and nothing to sign.
+        if (auth == AiAuthKinds.Browser)
+        {
+            if (provider != AiProviders.Copilot)
+            {
+                throw new InvalidOperationException(
+                    "Only Copilot can be reached through its own page. For the others use a key,"
+                    + " or sign in.");
+            }
+
+            return await CopilotWeb
+                .AskAsync(settings.AiCopilotWork, system + "\n\n" + user, token)
+                .ConfigureAwait(false);
+        }
+
         bool subscriptionToken = auth is AiAuthKinds.Token or AiAuthKinds.Subscription;
 
         string key = auth == AiAuthKinds.Subscription
