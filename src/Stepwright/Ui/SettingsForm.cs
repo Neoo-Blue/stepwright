@@ -53,6 +53,7 @@ public sealed class SettingsForm : Form
     private readonly TextBox _aiAppId = new();
     private readonly TextBox _aiTenant = new();
     private readonly Label _aiSignedIn = new();
+    private readonly Label _aiClaudeSignedIn = new();
     private readonly Label _aiModelNote = new();
     private readonly Label _aiPictureNote = new();
     private readonly List<string> _authKinds = new();
@@ -85,6 +86,7 @@ public sealed class SettingsForm : Form
     private readonly TableLayoutPanel _aiMicrosoftGroup = Group();
     private readonly TableLayoutPanel _aiCliGroup = Group();
     private readonly TableLayoutPanel _aiTokenGroup = Group();
+    private readonly TableLayoutPanel _aiSubscriptionGroup = Group();
 
     private Color _chosenMarker;
     private bool _keyEdited;
@@ -314,10 +316,12 @@ public sealed class SettingsForm : Form
         BuildKeyGroup();
         BuildCliGroup();
         BuildTokenGroup();
+        BuildSubscriptionGroup();
         BuildMicrosoftGroup();
 
         table.Controls.Add(_aiKeyGroup);
         table.Controls.Add(_aiCliGroup);
+        table.Controls.Add(_aiSubscriptionGroup);
         table.Controls.Add(_aiTokenGroup);
         table.Controls.Add(_aiMicrosoftGroup);
 
@@ -473,6 +477,170 @@ public sealed class SettingsForm : Form
     }
 
     /// <summary>The advanced route, and the warning that belongs with it.</summary>
+    /// <summary>
+    /// Signing in to a Claude subscription with nothing installed and nothing registered. The
+    /// browser opens on Anthropic's own page, the person signs in there, and Anthropic shows one
+    /// line to paste back. From then on the app renews itself and this page is never needed
+    /// again.
+    /// </summary>
+    private void BuildSubscriptionGroup()
+    {
+        AddNote(
+            _aiSubscriptionGroup,
+            "Press sign in, sign in to Claude in the browser as you normally would, then paste"
+            + " back the line it shows you. That is the whole setup. There is nothing to install"
+            + " and nothing to register, and the work is paid for by the Claude plan you already"
+            + " have rather than by the token.");
+
+        var row = new FlowLayoutPanel
+        {
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            Dock = DockStyle.Fill,
+            Margin = new Padding(0, 0, 0, 8),
+            BackColor = Color.Transparent,
+            WrapContents = false,
+        };
+
+        row.Controls.Add(Action("Sign in with Claude", async () => await SignInClaudeAsync().ConfigureAwait(true)));
+        row.Controls.Add(Action("Sign out", SignOutClaude));
+        row.Controls.Add(Action("See the plans", () => Open(ClaudeOAuth.PlansPage)));
+
+        _aiSubscriptionGroup.Controls.Add(row);
+
+        _aiClaudeSignedIn.AutoSize = true;
+        _aiClaudeSignedIn.MaximumSize = new Size(580, 0);
+        _aiClaudeSignedIn.ForeColor = Theme.Muted;
+        _aiClaudeSignedIn.Font = Theme.UiSmall;
+        _aiClaudeSignedIn.Margin = new Padding(1, 0, 0, 10);
+        _aiClaudeSignedIn.BackColor = Color.Transparent;
+        _aiSubscriptionGroup.Controls.Add(_aiClaudeSignedIn);
+
+        ShowClaudeSignIn();
+    }
+
+    private void ShowClaudeSignIn()
+    {
+        _aiClaudeSignedIn.ForeColor = _settings.HasClaudeSignIn ? Theme.Good : Theme.Muted;
+        _aiClaudeSignedIn.Text = _settings.HasClaudeSignIn
+            ? "Signed in"
+              + (string.IsNullOrWhiteSpace(_settings.AiAccount) ? string.Empty : " as " + _settings.AiAccount)
+              + ". Stepwright keeps this signed in on its own from now on."
+            : "Not signed in yet.";
+    }
+
+    /// <summary>
+    /// The sign in itself. The proof key is held here for as long as the person is pasting, and
+    /// a code without it is worth nothing, which is what makes this safe in an app that anybody
+    /// can download and read.
+    /// </summary>
+    private async Task SignInClaudeAsync()
+    {
+        ClaudeOAuth.Attempt attempt = ClaudeOAuth.Begin();
+        Open(attempt.Address);
+
+        string pasted = Ask(
+            "Sign in to Claude",
+            "Your browser is open on Anthropic's sign in page. Sign in there, then paste the"
+            + " line it gives you here.",
+            string.Empty);
+
+        if (string.IsNullOrWhiteSpace(pasted))
+        {
+            _aiResult.ForeColor = Theme.Muted;
+            _aiResult.Text = "Sign in cancelled.";
+            return;
+        }
+
+        _aiResult.ForeColor = Theme.Muted;
+        _aiResult.Text = "Finishing the sign in...";
+
+        try
+        {
+            using var cancel = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+
+            ClaudeSession session = await ClaudeOAuth
+                .FinishAsync(attempt, pasted, cancel.Token)
+                .ConfigureAwait(true);
+
+            _settings.AiAuth = AiAuthKinds.Subscription;
+            _settings.AiProvider = AiProviders.Anthropic;
+            _settings.AiBaseUrl = AiProviders.Find(AiProviders.Anthropic).BaseUrl;
+            _settings.RememberClaude(session);
+            _settings.Save();
+
+            _aiBaseUrl.Text = _settings.AiBaseUrl;
+            ShowClaudeSignIn();
+
+            _aiResult.ForeColor = Theme.Good;
+            _aiResult.Text = "Signed in. Test the connection to prove it works.";
+        }
+        catch (Exception error)
+        {
+            _aiResult.ForeColor = Theme.Record;
+            _aiResult.Text = StepwrightText.Shorten(error.Message, 220);
+        }
+    }
+
+    private void SignOutClaude()
+    {
+        _settings.ForgetClaude();
+        _settings.Save();
+        ShowClaudeSignIn();
+
+        _aiResult.ForeColor = Theme.Muted;
+        _aiResult.Text = "Signed out.";
+    }
+
+    /// <summary>
+    /// Asks for one line of text. The box is wide and the dialog stays put while the person goes
+    /// off to the browser and comes back, because that round trip is the whole point of it.
+    /// </summary>
+    private string Ask(string caption, string message, string initial)
+    {
+        using var dialog = new Form
+        {
+            Text = caption,
+            FormBorderStyle = FormBorderStyle.FixedDialog,
+            StartPosition = FormStartPosition.CenterParent,
+            ClientSize = new Size(520, 176),
+            MinimizeBox = false,
+            MaximizeBox = false,
+            BackColor = Theme.Window,
+            ForeColor = Theme.Text,
+            Font = Theme.Ui,
+        };
+
+        var text = new Label
+        {
+            Text = message,
+            Bounds = new Rectangle(16, 14, 488, 60),
+            ForeColor = Theme.Muted,
+        };
+
+        var input = new TextBox
+        {
+            Text = initial,
+            Bounds = new Rectangle(16, 82, 488, 26),
+            BackColor = Theme.Raised,
+            ForeColor = Theme.Text,
+        };
+
+        var ok = new Button { Text = "Finish", Bounds = new Rectangle(344, 124, 76, 30), DialogResult = DialogResult.OK };
+        var cancel = new Button { Text = "Cancel", Bounds = new Rectangle(428, 124, 76, 30), DialogResult = DialogResult.Cancel };
+        Theme.StyleButton(ok, primary: true);
+        Theme.StyleButton(cancel);
+
+        dialog.Controls.Add(text);
+        dialog.Controls.Add(input);
+        dialog.Controls.Add(ok);
+        dialog.Controls.Add(cancel);
+        dialog.AcceptButton = ok;
+        dialog.CancelButton = cancel;
+
+        return dialog.ShowDialog(this) == DialogResult.OK ? input.Text.Trim() : string.Empty;
+    }
+
     private void BuildTokenGroup()
     {
         AddNote(
@@ -699,6 +867,14 @@ public sealed class SettingsForm : Form
             _aiAuth.Items.Add("Sign in with my Microsoft work account");
         }
 
+        // Signing in here is offered before the routes that need something installed, because
+        // it is the one that asks the least of the person.
+        if (SelectedProvider.Id == AiProviders.Anthropic)
+        {
+            _authKinds.Add(AiAuthKinds.Subscription);
+            _aiAuth.Items.Add("Sign in with my Claude subscription");
+        }
+
         AiAgent? agent = AiAgents.Find(SelectedProvider.Id);
 
         if (agent is not null)
@@ -731,6 +907,7 @@ public sealed class SettingsForm : Form
         _aiKeyGroup.Visible = auth == AiAuthKinds.Key;
         _aiCliGroup.Visible = auth == AiAuthKinds.Cli;
         _aiTokenGroup.Visible = auth == AiAuthKinds.Token;
+        _aiSubscriptionGroup.Visible = auth == AiAuthKinds.Subscription;
         _aiMicrosoftGroup.Visible = auth == AiAuthKinds.Microsoft;
 
         // A service that cannot be shown a picture should not offer to be shown one.
@@ -767,7 +944,7 @@ public sealed class SettingsForm : Form
             _aiModelNote.Text = "Find models asks the service which ones your key is allowed to use.";
         }
 
-        if (auth == AiAuthKinds.Token)
+        if (auth is AiAuthKinds.Token or AiAuthKinds.Subscription)
         {
             _aiBaseUrl.Text = AiProviders.Find(AiProviders.Anthropic).BaseUrl;
         }

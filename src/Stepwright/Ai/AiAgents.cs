@@ -17,6 +17,12 @@ public static class AiAuthKinds
     /// <summary>A subscription token sent straight to the service. Advanced, and see the warning.</summary>
     public const string Token = "token";
 
+    /// <summary>
+    /// Signed in to a subscription from inside this app. No app to install and nothing to paste
+    /// beyond the one line the sign in page shows, and it renews itself from then on.
+    /// </summary>
+    public const string Subscription = "subscription";
+
     /// <summary>Signed in with a Microsoft work account, which is how Copilot and Foundry work.</summary>
     public const string Microsoft = "microsoft";
 
@@ -24,6 +30,7 @@ public static class AiAuthKinds
     {
         Cli => Cli,
         Token => Token,
+        Subscription => Subscription,
         Microsoft => Microsoft,
         _ => Key,
     };

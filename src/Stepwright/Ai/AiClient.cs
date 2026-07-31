@@ -37,8 +37,14 @@ public static class AiClient
             return await AiAgents.CompleteAsync(settings, system, user, pictures, token).ConfigureAwait(false);
         }
 
-        bool subscriptionToken = auth == AiAuthKinds.Token;
-        string key = subscriptionToken ? settings.GetAiToken() : settings.GetAiKey();
+        // A sign in made in this app and a token pasted from elsewhere reach the service the
+        // same way. The difference is that the first one renews itself.
+        bool subscriptionToken = auth is AiAuthKinds.Token or AiAuthKinds.Subscription;
+
+        string key = auth == AiAuthKinds.Subscription
+            ? await ClaudeTokenAsync(settings, token).ConfigureAwait(false)
+            : subscriptionToken ? settings.GetAiToken() : settings.GetAiKey();
+
         string baseUrl = (settings.AiBaseUrl ?? string.Empty).TrimEnd('/');
 
         if (string.IsNullOrWhiteSpace(baseUrl))
@@ -267,6 +273,37 @@ public static class AiClient
         }
 
         request.Headers.Add("anthropic-version", "2023-06-01");
+    }
+
+    // ------------------------------------------------------------------ Claude subscription
+
+    /// <summary>
+    /// A usable token for the signed in Claude subscription, renewing it when it has run out.
+    /// The renewal is written back to settings, so this is the last time the person thinks about
+    /// it: they sign in once and the app keeps itself signed in from then on.
+    /// </summary>
+    private static async Task<string> ClaudeTokenAsync(AppSettings settings, CancellationToken token)
+    {
+        if (!settings.HasClaudeSignIn)
+        {
+            throw new InvalidOperationException("Sign in to your Claude subscription in Settings first.");
+        }
+
+        string access = settings.GetAiAccess();
+
+        if (!string.IsNullOrEmpty(access) && settings.AiAccessExpires > DateTimeOffset.UtcNow)
+        {
+            return access;
+        }
+
+        ClaudeSession renewed = await ClaudeOAuth
+            .RenewAsync(settings.GetAiRefresh(), token)
+            .ConfigureAwait(false);
+
+        settings.RememberClaude(renewed);
+        settings.Save();
+
+        return renewed.AccessToken;
     }
 
     // ------------------------------------------------------------------ Microsoft shapes
@@ -574,8 +611,12 @@ public static class AiClient
                 : agent.Models.Where(m => m.Length > 0).ToList();
         }
 
-        bool subscriptionToken = auth == AiAuthKinds.Token;
-        string key = subscriptionToken ? settings.GetAiToken() : settings.GetAiKey();
+        bool subscriptionToken = auth is AiAuthKinds.Token or AiAuthKinds.Subscription;
+
+        string key = auth == AiAuthKinds.Subscription
+            ? await ClaudeTokenAsync(settings, token).ConfigureAwait(false)
+            : subscriptionToken ? settings.GetAiToken() : settings.GetAiKey();
+
         string baseUrl = (settings.AiBaseUrl ?? string.Empty).TrimEnd('/');
 
         if (string.IsNullOrWhiteSpace(baseUrl))

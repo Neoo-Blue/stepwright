@@ -256,6 +256,28 @@ public sealed class AppSettings
     [JsonIgnore]
     public bool HasMicrosoftSignIn => !string.IsNullOrEmpty(AiRefreshProtected);
 
+    /// <summary>
+    /// Keeps what a finished Claude sign in handed back. It shares the fields the Microsoft sign
+    /// in uses, because the assistant is signed in to one service at a time and two sets of
+    /// fields would only make it possible for them to disagree.
+    /// </summary>
+    public void RememberClaude(Ai.ClaudeSession session)
+    {
+        AiAccessProtected = Protect(session.AccessToken);
+        AiRefreshProtected = Protect(session.RefreshToken);
+        AiAccessExpires = session.Expires;
+
+        if (!string.IsNullOrWhiteSpace(session.Account))
+        {
+            AiAccount = session.Account;
+        }
+    }
+
+    public void ForgetClaude() => ForgetMicrosoft();
+
+    [JsonIgnore]
+    public bool HasClaudeSignIn => !string.IsNullOrEmpty(AiRefreshProtected);
+
     public void SetHuduKey(string plainKey) => HuduKeyProtected = Protect(plainKey);
 
     public string GetHuduKey() => Reveal(HuduKeyProtected);
@@ -308,6 +330,7 @@ public sealed class AppSettings
     {
         "cli" => true,
         "token" => HasAiToken,
+        "subscription" => HasClaudeSignIn,
         "microsoft" => HasMicrosoftSignIn,
         _ => HasAiKey || (AiBaseUrl ?? string.Empty).Contains("localhost", StringComparison.OrdinalIgnoreCase),
     };
