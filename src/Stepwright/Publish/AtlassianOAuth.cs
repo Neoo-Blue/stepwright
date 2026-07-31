@@ -141,6 +141,93 @@ public static class AtlassianOAuth
         }
     }
 
+    /// <summary>
+    /// Signing in through the published broker. The person presses one button: everything they
+    /// would otherwise have registered themselves already exists on the other side of it.
+    ///
+    /// The tokens come back by ticket rather than in the address, so they never touch browser
+    /// history, and the ticket is good once.
+    /// </summary>
+    public static async Task<AtlassianSession> SignInThroughBrokerAsync(
+        Action<string>? progress,
+        CancellationToken token)
+    {
+        if (!Connect.HasBroker)
+        {
+            throw new InvalidOperationException("This copy of Stepwright has no sign in broker.");
+        }
+
+        string state = Guid.NewGuid().ToString("n") + Guid.NewGuid().ToString("n");
+        var listener = new TcpListener(IPAddress.Loopback, CallbackPort);
+
+        try
+        {
+            listener.Start();
+        }
+        catch (SocketException error)
+        {
+            throw new InvalidOperationException(
+                $"Nothing could listen on port {CallbackPort}. Close whatever is using it and try again. {error.Message}");
+        }
+
+        try
+        {
+            progress?.Invoke("Waiting for the browser...");
+            Open($"{Connect.Broker}/start?port={CallbackPort}&state={state}");
+
+            string ticket = await WaitForAsync(listener, "ticket", state: null, token).ConfigureAwait(false);
+
+            progress?.Invoke("Collecting the sign in...");
+
+            using var claim = new HttpRequestMessage(HttpMethod.Post, Connect.Broker + "/claim")
+            {
+                Content = new StringContent(
+                    new JsonObject { ["ticket"] = ticket }.ToJsonString(),
+                    Encoding.UTF8,
+                    "application/json"),
+            };
+
+            using HttpResponseMessage response = await Http.SendAsync(claim, token).ConfigureAwait(false);
+            string raw = await response.Content.ReadAsStringAsync(token).ConfigureAwait(false);
+
+            if (!response.IsSuccessStatusCode || JsonNode.Parse(raw) is not JsonNode granted)
+            {
+                throw new InvalidOperationException("The sign in could not be collected. Try again.");
+            }
+
+            return await FinishAsync(granted, string.Empty, chosen: null, token).ConfigureAwait(false);
+        }
+        finally
+        {
+            listener.Stop();
+        }
+    }
+
+    /// <summary>Renews a sign in that was made through the broker, which holds the secret.</summary>
+    public static async Task<AtlassianSession> RefreshThroughBrokerAsync(
+        string refreshToken,
+        string keepCloudId,
+        CancellationToken token)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, Connect.Broker + "/refresh")
+        {
+            Content = new StringContent(
+                new JsonObject { ["refresh_token"] = refreshToken }.ToJsonString(),
+                Encoding.UTF8,
+                "application/json"),
+        };
+
+        using HttpResponseMessage response = await Http.SendAsync(request, token).ConfigureAwait(false);
+        string raw = await response.Content.ReadAsStringAsync(token).ConfigureAwait(false);
+
+        if (!response.IsSuccessStatusCode || JsonNode.Parse(raw) is not JsonNode granted)
+        {
+            throw new InvalidOperationException("That sign in could not be renewed. Sign in again in Settings.");
+        }
+
+        return await FinishAsync(granted, refreshToken, keepCloudId, token).ConfigureAwait(false);
+    }
+
     /// <summary>Renews a session that has run out, without asking the person anything.</summary>
     public static async Task<AtlassianSession> RefreshAsync(
         string clientId,
@@ -298,7 +385,14 @@ public static class AtlassianOAuth
     /// Reads the one request the browser makes when it comes back. Only the first line matters,
     /// which is why this is a socket rather than anything larger.
     /// </summary>
-    private static async Task<string> WaitForCodeAsync(TcpListener listener, string state, CancellationToken token)
+    private static Task<string> WaitForCodeAsync(TcpListener listener, string state, CancellationToken token) =>
+        WaitForAsync(listener, "code", state, token);
+
+    private static async Task<string> WaitForAsync(
+        TcpListener listener,
+        string wanted,
+        string? state,
+        CancellationToken token)
     {
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(token);
         stop.CancelAfter(TimeSpan.FromMinutes(5));
@@ -341,13 +435,13 @@ public static class AtlassianOAuth
                 throw new InvalidOperationException("Atlassian refused the sign in. " + error);
             }
 
-            if (!string.Equals(query["state"], state, StringComparison.Ordinal))
+            if (state is not null && !string.Equals(query["state"], state, StringComparison.Ordinal))
             {
                 await ReplyAsync(stream, "That answer was not the one asked for.", stop.Token).ConfigureAwait(false);
                 throw new InvalidOperationException("The answer from the browser did not match the request.");
             }
 
-            string code = query["code"] ?? string.Empty;
+            string code = query[wanted] ?? string.Empty;
 
             if (string.IsNullOrEmpty(code))
             {

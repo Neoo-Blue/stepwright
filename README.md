@@ -211,6 +211,33 @@ for your Windows account with the platform data protection interface.
 Press **Find models** and Stepwright asks that service which models your key is actually allowed
 to use, then fills the list. You can still type a name yourself.
 
+### Making it one press
+
+Every service here can be connected two ways. Either the company registers its own application
+and pastes identifiers into Settings, which is where this started, or whoever builds your copy
+registers one and nobody else ever thinks about it.
+
+The second way lives in `Connect.cs` and in `broker/`. Fill in a Microsoft application
+identifier and the address of the sign in broker, build once, and hand that build to your
+technicians: Confluence becomes press sign in and finish, and Microsoft becomes press sign in
+after one administrator approval for the whole company. Leave them empty and everything behaves
+exactly as before, so the public build asks nobody for anything.
+
+The broker exists for one reason. Atlassian will not exchange an authorization code without a
+client secret, and an application distributed as a file cannot keep a secret. The worker under
+`broker/` holds it instead. It stores nothing beyond the two minutes a sign in takes, never
+proxies an API call, and only ever hands a sign in back to the machine that started it.
+
+Microsoft needs no broker, because Entra supports public clients properly. What it does need is
+one approval: four of the seven permissions the Copilot chat interface requires are
+administrator consent permissions, and no application can change that. So the first person at a
+company to sign in may be told to ask, and Stepwright now hands them the exact link to send
+rather than an error code.
+
+Hudu has no sign in at all. Its API is an administrator minted key and nothing else, so that one
+still needs a conversation. It is one paste, once, and the settings page says what the key can
+reach.
+
 ### Microsoft, for a shop that already runs on it
 
 Two more services, both signed in with a work account rather than a key. The sign in shows a

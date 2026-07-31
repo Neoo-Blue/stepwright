@@ -538,14 +538,26 @@ public sealed class SettingsForm : Form
     /// </summary>
     private void BuildMicrosoftGroup()
     {
-        AddNote(
-            _aiMicrosoftGroup,
-            "Register an application once in Microsoft Entra, allow it to be a public client,"
-            + " and grant it the Graph permissions the service needs. Then sign in here and"
-            + " Stepwright renews it on its own.");
+        if (Connect.HasMicrosoft)
+        {
+            AddNote(
+                _aiMicrosoftGroup,
+                "Press sign in and follow the browser. There is nothing to register: this copy of"
+                + " Stepwright already has an application. The first person at your company to"
+                + " use it may be told that an administrator has to approve it once, and after"
+                + " that everybody simply signs in.");
+        }
+        else
+        {
+            AddNote(
+                _aiMicrosoftGroup,
+                "Register an application once in Microsoft Entra, allow it to be a public client,"
+                + " and grant it the Graph permissions the service needs. Then sign in here and"
+                + " Stepwright renews it on its own.");
 
-        _aiAppId.Text = _settings.AiAppId;
-        AddField(_aiMicrosoftGroup, "Application identifier", _aiAppId);
+            _aiAppId.Text = _settings.AiAppId;
+            AddField(_aiMicrosoftGroup, "Application identifier", _aiAppId);
+        }
 
         _aiTenant.Text = _settings.AiTenant;
         AddField(
@@ -608,9 +620,11 @@ public sealed class SettingsForm : Form
 
             using var cancel = new CancellationTokenSource(TimeSpan.FromMinutes(15));
 
+            string appId = _aiAppId.Text.Trim().Length > 0 ? _aiAppId.Text.Trim() : Connect.MicrosoftAppId;
+
             MicrosoftSession session = await MicrosoftOAuth
                 .SignInAsync(
-                    _aiAppId.Text.Trim(),
+                    appId,
                     _aiTenant.Text.Trim(),
                     scopes,
                     (code, where) =>
@@ -636,7 +650,7 @@ public sealed class SettingsForm : Form
             // than one that is kept by mistake.
             _settings.AiAuth = AiAuthKinds.Microsoft;
             _settings.AiProvider = SelectedProvider.Id;
-            _settings.AiAppId = _aiAppId.Text.Trim();
+            _settings.AiAppId = appId;
             _settings.AiTenant = _aiTenant.Text.Trim();
             _settings.RememberMicrosoft(session);
             _settings.Save();
@@ -959,22 +973,33 @@ public sealed class SettingsForm : Form
     /// </summary>
     private void BuildConfluenceOAuthGroup()
     {
-        AddNote(
-            _confluenceOAuthGroup,
-            "Register an application once in the Atlassian developer console, give it the"
-            + " Confluence permissions, and add " + AtlassianOAuth.CallbackUrl
-            + " as its callback address. Then sign in here and nothing has to be pasted again.");
+        if (Connect.HasBroker)
+        {
+            AddNote(
+                _confluenceOAuthGroup,
+                "Press sign in, approve it in the browser, and you are finished. There is nothing"
+                + " to register and nothing to paste: this copy of Stepwright already has an"
+                + " application, and the sign in goes to Atlassian exactly as it always did.");
+        }
+        else
+        {
+            AddNote(
+                _confluenceOAuthGroup,
+                "Register an application once in the Atlassian developer console, give it the"
+                + " Confluence permissions, and add " + AtlassianOAuth.CallbackUrl
+                + " as its callback address. Then sign in here and nothing has to be pasted again.");
 
-        _confluenceClientId.Text = _settings.ConfluenceClientId;
-        AddField(_confluenceOAuthGroup, "Application identifier", _confluenceClientId);
+            _confluenceClientId.Text = _settings.ConfluenceClientId;
+            AddField(_confluenceOAuthGroup, "Application identifier", _confluenceClientId);
 
-        _confluenceSecret.UseSystemPasswordChar = true;
-        _confluenceSecret.Text = string.IsNullOrEmpty(_settings.ConfluenceClientSecretProtected)
-            ? string.Empty
-            : new string('*', 24);
+            _confluenceSecret.UseSystemPasswordChar = true;
+            _confluenceSecret.Text = string.IsNullOrEmpty(_settings.ConfluenceClientSecretProtected)
+                ? string.Empty
+                : new string('*', 24);
 
-        _confluenceSecret.TextChanged += (_, _) => _confluenceSecretEdited = true;
-        AddField(_confluenceOAuthGroup, "Application secret", _confluenceSecret);
+            _confluenceSecret.TextChanged += (_, _) => _confluenceSecretEdited = true;
+            AddField(_confluenceOAuthGroup, "Application secret", _confluenceSecret);
+        }
 
         var row = new FlowLayoutPanel
         {
@@ -1032,13 +1057,21 @@ public sealed class SettingsForm : Form
 
             using var cancel = new CancellationTokenSource(TimeSpan.FromMinutes(5));
 
-            AtlassianSession session = await AtlassianOAuth
-                .SignInAsync(
-                    _confluenceClientId.Text.Trim(),
-                    secret,
-                    message => _confluenceResult.Text = message,
-                    cancel.Token)
-                .ConfigureAwait(true);
+            bool own = _confluenceClientId.Text.Trim().Length > 0;
+
+            AtlassianSession session = Connect.HasBroker && !own
+                ? await AtlassianOAuth
+                    .SignInThroughBrokerAsync(
+                        message => _confluenceResult.Text = message,
+                        cancel.Token)
+                    .ConfigureAwait(true)
+                : await AtlassianOAuth
+                    .SignInAsync(
+                        _confluenceClientId.Text.Trim(),
+                        secret,
+                        message => _confluenceResult.Text = message,
+                        cancel.Token)
+                    .ConfigureAwait(true);
 
             // A person who supports several customers is signed in to several Confluence sites,
             // and guessing which one they meant would publish one customer's work into another

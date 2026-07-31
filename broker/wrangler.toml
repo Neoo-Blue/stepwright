@@ -1,0 +1,8 @@
+name = "stepwright-signin"
+main = "worker.js"
+compatibility_date = "2026-01-01"
+
+# Sign ins in flight live here for two minutes and are then gone. Nothing else is stored.
+[[kv_namespaces]]
+binding = "SIGNIN"
+id = "replace-with-your-kv-namespace-id"

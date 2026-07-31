@@ -91,12 +91,19 @@ public sealed class ConfluenceClient
 
         if (string.IsNullOrEmpty(access) || settings.ConfluenceAccessExpires <= DateTimeOffset.UtcNow)
         {
-            AtlassianSession renewed = await AtlassianOAuth.RefreshAsync(
-                settings.ConfluenceClientId,
-                settings.GetConfluenceSecret(),
-                settings.GetConfluenceRefresh(),
-                settings.ConfluenceCloudId,
-                token).ConfigureAwait(false);
+            // A sign in made through the broker is renewed through it as well, because the
+            // secret that renewal needs was never on this machine.
+            AtlassianSession renewed = string.IsNullOrWhiteSpace(settings.ConfluenceClientId) && Connect.HasBroker
+                ? await AtlassianOAuth.RefreshThroughBrokerAsync(
+                    settings.GetConfluenceRefresh(),
+                    settings.ConfluenceCloudId,
+                    token).ConfigureAwait(false)
+                : await AtlassianOAuth.RefreshAsync(
+                    settings.ConfluenceClientId,
+                    settings.GetConfluenceSecret(),
+                    settings.GetConfluenceRefresh(),
+                    settings.ConfluenceCloudId,
+                    token).ConfigureAwait(false);
 
             settings.RememberConfluence(renewed);
             settings.Save();

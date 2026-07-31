@@ -1,5 +1,6 @@
 using System.Net.Http;
 using System.Text.Json.Nodes;
+using Stepwright;
 
 namespace Stepwright.Ai;
 
@@ -148,7 +149,7 @@ public static class MicrosoftOAuth
                     throw new InvalidOperationException("The code ran out before it was used. Try again.");
 
                 default:
-                    throw new InvalidOperationException("Microsoft refused the sign in. " + error);
+                    throw new InvalidOperationException(Explain(error, tenant));
             }
         }
 
@@ -244,6 +245,58 @@ public static class MicrosoftOAuth
             // A token shaped differently than expected is not worth failing a sign in over.
             return (string.Empty, string.Empty);
         }
+    }
+
+    /// <summary>
+    /// Turns a refusal into the sentence a person can act on. The one that matters is consent:
+    /// it is not a failure, it is a request waiting for somebody with the authority to grant
+    /// it, and saying so is the difference between a technician giving up and a technician
+    /// sending one message.
+    /// </summary>
+    private static string Explain(string error, string? tenant)
+    {
+        string where = string.IsNullOrWhiteSpace(tenant) ? "organizations" : tenant.Trim();
+
+        if (error.Contains("AADSTS65001", StringComparison.OrdinalIgnoreCase)
+            || error.Contains("consent", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Your organisation has not approved Stepwright yet. This is approved once,"
+                + " by an administrator, for everybody. Send them this address and they can do"
+                + " it in a moment: " + ConsentUrl(where);
+        }
+
+        if (error.Contains("AADSTS7000218", StringComparison.OrdinalIgnoreCase))
+        {
+            return "The application is not marked as a public client in Entra, so Microsoft will"
+                + " not sign a desktop application in with it. Turn on allow public client flows"
+                + " in its authentication settings.";
+        }
+
+        if (error.Contains("AADSTS500011", StringComparison.OrdinalIgnoreCase)
+            || error.Contains("AADSTS700016", StringComparison.OrdinalIgnoreCase))
+        {
+            return "That application does not exist in this organisation. Check the identifier,"
+                + " or ask your administrator to approve it once: " + ConsentUrl(where);
+        }
+
+        if (error.Contains("AADSTS50076", StringComparison.OrdinalIgnoreCase)
+            || error.Contains("AADSTS53003", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Your organisation's access rules refused this sign in. Ask your"
+                + " administrator whether the device code sign in is permitted, and mention"
+                + " Stepwright by name.";
+        }
+
+        return "Microsoft refused the sign in. " + error;
+    }
+
+    /// <summary>The page an administrator approves the application on, once, for everybody.</summary>
+    public static string ConsentUrl(string? tenant, string? clientId = null)
+    {
+        string where = string.IsNullOrWhiteSpace(tenant) ? "organizations" : tenant.Trim();
+        string app = string.IsNullOrWhiteSpace(clientId) ? Connect.MicrosoftAppId : clientId.Trim();
+
+        return $"https://login.microsoftonline.com/{where}/adminconsent?client_id={app}";
     }
 
     private static async Task<JsonNode> FormAsync(
