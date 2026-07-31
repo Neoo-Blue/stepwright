@@ -106,7 +106,7 @@ jobs:
           -p:IncludeNativeLibrariesForSelfExtract=true
           -p:EnableCompressionInSingleFile=true
           -p:DebugType=none
-          -p:Version=$BUILD_VERSION
+          -p:Version=$env:BUILD_VERSION
           -o publish/standalone
 
       - name: Publish the small build
@@ -115,7 +115,7 @@ jobs:
           -c Release -r win-x64 --self-contained false
           -p:PublishSingleFile=true
           -p:DebugType=none
-          -p:Version=$BUILD_VERSION
+          -p:Version=$env:BUILD_VERSION
           -o publish/compact
 
       - name: Name the outputs
