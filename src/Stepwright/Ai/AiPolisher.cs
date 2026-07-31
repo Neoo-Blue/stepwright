@@ -141,6 +141,21 @@ public static class AiPolisher
         bool throughPage = AiAuthKinds.Clean(settings.AiAuth) == AiAuthKinds.Browser;
         int batchSize = throughPage ? 4 : 15;
 
+        // What to ask for, and in what form. A service with a real interface answers in json
+        // because it was asked to. A chat page is a chat page: it will hand back a small object
+        // happily enough, and it will answer a request for a list of them by writing prose with
+        // headings, because that is what it is for. So a page is asked for lines instead, one to
+        // a step, which is a shape a chat window cannot help but produce correctly.
+        string form = throughPage
+            ? "Reply with one line for each step and nothing else. Begin each line with the step"
+              + " number, a full stop and a space, then the rewritten sentence."
+              + (settings.AiWriteNotes
+                  ? " Where a note genuinely helps, put two vertical bars after the sentence and"
+                    + " then the note, on the same line."
+                  : string.Empty)
+              + " Write no heading, no blank line, no explanation and no json."
+            : "Reply with JSON only in the form {\"steps\":[{\"i\":1,\"text\":\"...\",\"note\":\"...\"}]}.";
+
         string system = HouseStyle + " "
             + (wordsFor is null
                 ? string.Empty
@@ -150,7 +165,7 @@ public static class AiPolisher
                   + "arrive in reading order and separated by bars, so a label may be split across "
                   + "two of them. ")
             + (settings.AiWriteNotes ? NoteStyle + " " : "Leave every note empty. ")
-            + "Reply with JSON only in the form {\"steps\":[{\"i\":1,\"text\":\"...\",\"note\":\"...\"}]}.";
+            + form;
 
         for (int offset = 0; offset < targets.Count; offset += batchSize)
         {
@@ -180,7 +195,10 @@ public static class AiPolisher
                 .CompleteAsync(settings, system, payload.ToString(), null, token)
                 .ConfigureAwait(true);
 
-            JsonArray? steps = Steps(reply);
+            // A page answers in lines, so its lines are read as the steps they are. Anything else
+            // is read as json, and a page that answered in json anyway is still understood,
+            // because the line reading falls through to it.
+            JsonArray? steps = throughPage ? Lines(reply) ?? Steps(reply) : Steps(reply);
 
             if (steps is null)
             {
@@ -217,6 +235,79 @@ public static class AiPolisher
         }
 
         return changed;
+    }
+
+    /// <summary>
+    /// The rewritten steps out of a reply written as lines, which is what a chat page is asked
+    /// for. A line is a number, a full stop and the sentence, with the note after two vertical
+    /// bars when there is one. Anything that is not a numbered line is passed over, so a heading
+    /// or a closing pleasantry the page could not help adding does no harm.
+    /// </summary>
+    private static JsonArray? Lines(string reply)
+    {
+        if (string.IsNullOrWhiteSpace(reply))
+        {
+            return null;
+        }
+
+        var found = new JsonArray();
+
+        foreach (string raw in reply.Split('\n'))
+        {
+            string line = raw.Trim().TrimStart('*', '-', '#', ' ').Trim();
+
+            if (line.Length < 3)
+            {
+                continue;
+            }
+
+            int stop = line.IndexOfAny(new[] { '.', ')', ':' });
+
+            if (stop <= 0 || stop > 3)
+            {
+                continue;
+            }
+
+            if (!int.TryParse(line[..stop], out int number) || number < 1)
+            {
+                continue;
+            }
+
+            string rest = line[(stop + 1)..].Trim();
+
+            if (rest.Length == 0)
+            {
+                continue;
+            }
+
+            string text = rest;
+            string note = string.Empty;
+
+            int bars = rest.IndexOf("||", StringComparison.Ordinal);
+
+            if (bars >= 0)
+            {
+                text = rest[..bars].Trim();
+                note = rest[(bars + 2)..].Trim();
+            }
+
+            // A sentence wrapped in quotation marks by a helpful page is still the sentence.
+            text = text.Trim('"').Trim();
+
+            if (text.Length == 0)
+            {
+                continue;
+            }
+
+            found.Add(new JsonObject
+            {
+                ["i"] = number,
+                ["text"] = text,
+                ["note"] = note,
+            });
+        }
+
+        return found.Count > 0 ? found : null;
     }
 
     /// <summary>
