@@ -116,8 +116,28 @@ public static class CopilotWeb
             await Session.ClickAsync(x, y, token).ConfigureAwait(true);
             await Task.Delay(200, token).ConfigureAwait(true);
             await Session.TypeAsync(Flatten(question), token).ConfigureAwait(true);
-            await Task.Delay(500, token).ConfigureAwait(true);
+
+            // The page has to be given a moment to notice the text, because the send button only
+            // arms once it has, and what is on the page is only worth noting once the question is
+            // in the box: the greeting under the box is rewritten every so often, and a note taken
+            // any earlier would call the new greeting an answer.
+            await Task.Delay(900, token).ConfigureAwait(true);
+            await Session.RunAsync(NoteScript(), token).ConfigureAwait(true);
+
             await Session.EnterAsync(token).ConfigureAwait(true);
+            await Task.Delay(1200, token).ConfigureAwait(true);
+
+            // The Enter is not always what sends. When the question is still sitting in the box,
+            // the send button is pressed, and pressed truly, with a real click at its own place,
+            // because a button in this page ignores a click a script merely calls for.
+            JsonNode? pending = await Session.RunAsync(SendButtonScript(question), token).ConfigureAwait(true);
+
+            if (pending?["needed"]?.GetValue<bool>() == true && pending["x"] is not null)
+            {
+                await Session
+                    .ClickAsync(pending["x"]!.GetValue<double>(), pending["y"]!.GetValue<double>(), token)
+                    .ConfigureAwait(true);
+            }
         }
 
         return prepared;
@@ -430,6 +450,60 @@ public static class CopilotWeb
         """;
 
     /// <summary>
+    /// Notes what is on the page at the moment the question is in the box and about to go. Taken
+    /// here rather than earlier because the greeting under the box is rewritten every so often,
+    /// and a note taken before it settled would leave the newest greeting looking like an answer.
+    /// </summary>
+    private static string NoteScript() =>
+        "(async () => {" + Helpers + """
+          window.__swBefore = blocks();
+          window.__swBeforeAll = allLeaves();
+          return { noted: window.__swBefore.length };
+        })()
+        """;
+
+    /// <summary>
+    /// Says whether the question is still sitting in the box, and where the send button is if it
+    /// is. The button is found by what it is for rather than by its name alone, so an icon with
+    /// nothing but a label still counts.
+    /// </summary>
+    private static string SendButtonScript(string question)
+    {
+        string asked = JsonSerializer.Serialize(question);
+
+        return "(async () => {" + Helpers + """
+          const q1 = norm(__QUESTION__);
+          const before = new Set(window.__swBefore || []);
+
+          const posted = blocks().some(t => !before.has(t)
+            && (t === q1 || (q1.length > 10 && t.indexOf(q1.slice(0, Math.min(30, q1.length))) === 0)));
+
+          if (posted) { return { needed: false }; }
+
+          const buttons = deep().filter(b => {
+            if (b.tagName !== 'BUTTON' && !(b.getAttribute && b.getAttribute('role') === 'button')) return false;
+            let box; try { box = b.getBoundingClientRect(); } catch (e) { return false; }
+            if (box.width < 8 || box.height < 8) return false;
+            const st = (b.ownerDocument.defaultView || window).getComputedStyle(b);
+            if (!st || st.visibility === 'hidden' || st.display === 'none') return false;
+            if (b.disabled || b.getAttribute('aria-disabled') === 'true') return false;
+            const l = ((b.getAttribute('aria-label') || '') + ' ' + (b.title || '') + ' '
+              + (b.getAttribute('data-testid') || '') + ' ' + (b.textContent || '')).toLowerCase();
+            return /send|submit/.test(l);
+          });
+
+          if (!buttons.length) { return { needed: true, error: 'no send button could be found' }; }
+
+          // The one lowest on the page is the one by the box, rather than one in a menu above it.
+          buttons.sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top);
+          const box = buttons[buttons.length - 1].getBoundingClientRect();
+
+          return { needed: true, x: box.left + box.width / 2, y: box.top + box.height / 2 };
+        })()
+        """.Replace("__QUESTION__", asked, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// Reads the answer. It is the largest block that is new since the question was sent and is
     /// not the question read back. If the question never became a block the trusted Enter did not
     /// send it, so a send button is pressed. When no answer can be found, the new blocks are
@@ -456,27 +530,39 @@ public static class CopilotWeb
 
           const isQuestion = t => t === q1 || (q1.length > 10 && t.indexOf(q1.slice(0, Math.min(30, q1.length))) === 0);
 
+          // The page greets the person with a rotating suggestion, so a greeting is new every time
+          // it changes and would otherwise read as an answer. It never is one.
+          const greeting = t => /^(hi|hello|welcome|good (morning|afternoon|evening))\b/i.test(t)
+            || /^try asking/i.test(t)
+            || /how can i help/i.test(t);
+
           const answerFrom = () => {
-            const fresh = blocks().filter(t => !before.has(t) && !isQuestion(t));
+            const fresh = blocks().filter(t => !before.has(t) && !isQuestion(t) && !greeting(t));
             if (!fresh.length) return '';
             fresh.sort((a, b) => a.length - b.length);
             return stripChrome(fresh[fresh.length - 1]);
           };
 
-          await sleep(1200);
+          // The question becomes a turn of its own once it has actually gone. Until that happens
+          // nothing on the page can be an answer to it, and saying otherwise is how a greeting
+          // came back as a reply. So this waits for the question to post, and if it never does it
+          // says the question was never sent rather than inventing something.
+          const posted = () => blocks().some(t => !before.has(t) && isQuestion(t));
 
-          // The question should have become a block once it was sent. If it did not, the Enter did
-          // not take, so find the send button and press it.
-          const sent = () => blocks().some(t => !before.has(t) && isQuestion(t));
+          let went = false;
+          const goes = Date.now() + 25000;
+          while (Date.now() < goes) {
+            if (posted()) { went = true; break; }
+            await sleep(700);
+          }
 
-          if (!sent()) {
-            const button = deep().filter(b => {
-              if (b.tagName !== 'BUTTON' && !(b.getAttribute && b.getAttribute('role') === 'button')) return false;
-              if (!visible(b) || b.disabled || b.getAttribute('aria-disabled') === 'true') return false;
-              const l = ((b.getAttribute('aria-label') || '') + ' ' + (b.title || '') + ' ' + (b.textContent || '') + ' ' + (b.getAttribute('data-testid') || '')).toLowerCase();
-              return /send|submit/.test(l);
-            }).pop();
-            if (button) { button.click(); }
+          if (!went) {
+            const fresh = blocks().filter(t => !before.has(t));
+            return {
+              stage: 'send',
+              error: 'the question stayed in the box, so Copilot never received it',
+              sample: fresh.slice(-6).join(' | ').slice(0, 300),
+            };
           }
 
           let text = '';
