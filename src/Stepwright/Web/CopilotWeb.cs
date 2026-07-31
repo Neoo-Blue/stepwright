@@ -54,6 +54,223 @@ public static class CopilotWeb
         _session = null;
     }
 
+    // ------------------------------------------------------------------ seeing the page
+
+    /// <summary>
+    /// Sends the question and then writes down everything the page holds, so the reading of the
+    /// answer can be built against what is really there rather than against a guess. This is the
+    /// debugging eye: it does not try to be clever, it just reports every piece of text on the
+    /// page, what element it sits in, and whether it is new since the question was sent.
+    /// </summary>
+    public static async Task<string> DiagnoseAsync(bool work, string question, CancellationToken token)
+    {
+        if (!Session.Remembered)
+        {
+            throw new InvalidOperationException("Copilot is not signed in on this machine yet. Sign in in Settings, once.");
+        }
+
+        JsonNode? dumped = await UiThread.RunAsync(async () =>
+        {
+            await Session.GoAsync(work ? WorkPage : PersonalPage, token).ConfigureAwait(true);
+
+            if (!Landed(Session.Address, work))
+            {
+                throw new InvalidOperationException("Copilot is asking to be signed in to again. Sign in in Settings.");
+            }
+
+            return await Session.RunAsync(DebugScript(question), token).ConfigureAwait(true);
+        }).ConfigureAwait(false);
+
+        return Format(dumped, question);
+    }
+
+    /// <summary>Turns the page report into something a person can read and paste.</summary>
+    private static string Format(JsonNode? dumped, string question)
+    {
+        if (dumped is null)
+        {
+            return "The page returned nothing at all.";
+        }
+
+        if (dumped["error"]?.GetValue<string>() is string failed)
+        {
+            return "Could not read the page. " + failed;
+        }
+
+        var report = new System.Text.StringBuilder();
+        report.AppendLine("Stepwright Copilot page report");
+        report.AppendLine("Version " + Stepwright.Build.Version);
+        report.AppendLine("Question sent: " + question);
+        report.AppendLine("Composer found: " + (dumped["composer"]?.GetValue<bool>() ?? false));
+        report.AppendLine("Address: " + (dumped["url"]?.GetValue<string>() ?? string.Empty));
+        report.AppendLine();
+        report.AppendLine("Every visible piece of text, newest marked with a star. The columns are:");
+        report.AppendLine("[new] tag role testid | topPx heightPx len controls block | text");
+        report.AppendLine(new string('-', 70));
+
+        if (dumped["items"] is JsonArray items)
+        {
+            foreach (JsonNode? item in items)
+            {
+                if (item is null)
+                {
+                    continue;
+                }
+
+                string star = (item["fresh"]?.GetValue<bool>() ?? false) ? "*" : " ";
+                string tag = item["tag"]?.GetValue<string>() ?? "?";
+                string role = item["role"]?.GetValue<string>() ?? "-";
+                string testid = item["testid"]?.GetValue<string>() ?? "-";
+                int top = item["top"]?.GetValue<int>() ?? 0;
+                int height = item["h"]?.GetValue<int>() ?? 0;
+                int len = item["len"]?.GetValue<int>() ?? 0;
+                int controls = item["controls"]?.GetValue<int>() ?? 0;
+                string block = (item["block"]?.GetValue<bool>() ?? false) ? "Y" : "n";
+                string text = item["text"]?.GetValue<string>() ?? string.Empty;
+
+                report.AppendLine($"{star} {tag} {role} {testid} | {top} {height} {len} c{controls} {block} | {text}");
+            }
+        }
+
+        return report.ToString();
+    }
+
+    /// <summary>
+    /// The debugging script. It sends the question the same way the real one does, waits a while
+    /// for an answer, and then writes down every visible piece of text with the marks that would
+    /// let a person decide which one is the answer: what element it is, where it sits, how long it
+    /// is, how many controls it holds, whether it is new, and whether the real reader would have
+    /// taken it as a block.
+    /// </summary>
+    private static string DebugScript(string question)
+    {
+        string asked = JsonSerializer.Serialize(question);
+
+        return """
+        (async () => {
+          const sleep = ms => new Promise(r => setTimeout(r, ms));
+          const norm = s => (s || '').replace(/\s+/g, ' ').trim();
+          const q1 = norm(__QUESTION__);
+
+          const deep = () => {
+            const out = [];
+            const stack = [document];
+            const seen = new Set();
+            while (stack.length) {
+              const root = stack.pop();
+              if (!root || seen.has(root)) continue;
+              seen.add(root);
+              let all = [];
+              try { all = root.querySelectorAll ? [...root.querySelectorAll('*')] : []; } catch (e) { all = []; }
+              for (const el of all) {
+                out.push(el);
+                if (el.shadowRoot) stack.push(el.shadowRoot);
+                if (el.tagName === 'IFRAME') { try { if (el.contentDocument) stack.push(el.contentDocument); } catch (e) {} }
+              }
+            }
+            return out;
+          };
+
+          const visible = el => {
+            if (!el) return false;
+            let b; try { b = el.getBoundingClientRect(); } catch (e) { return false; }
+            if (b.width < 40 || b.height < 8) return false;
+            const st = (el.ownerDocument.defaultView || window).getComputedStyle(el);
+            return st && st.visibility !== 'hidden' && st.display !== 'none';
+          };
+
+          const leaf = (el, t) => {
+            for (const c of el.children) {
+              let ct = ''; try { ct = norm(c.innerText); } catch (e) {}
+              if (ct.length >= t.length * 0.9) return false;
+            }
+            return true;
+          };
+
+          const composer = () => deep().filter(el => {
+            if (!visible(el)) return false;
+            if (el.isContentEditable) return true;
+            const tag = el.tagName;
+            if (tag === 'TEXTAREA') return true;
+            if (tag === 'INPUT' && (el.type === 'text' || el.type === 'search')) return true;
+            return el.getAttribute && el.getAttribute('role') === 'textbox';
+          }).pop();
+
+          const record = (before) => {
+            const items = [];
+            for (const el of deep()) {
+              if (!visible(el)) continue;
+              let t; try { t = norm(el.innerText); } catch (e) { continue; }
+              if (t.length < 2 || t.length > 4000) continue;
+              if (!leaf(el, t)) continue;
+              let controls = 0;
+              try { controls = el.querySelectorAll('a,button,[role="button"],[role="link"],[role="tab"],[role="menuitem"],[role="option"]').length; } catch (e) {}
+              const tag = el.tagName;
+              const isControl = tag === 'BUTTON' || tag === 'A' || tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'NAV' || tag === 'LI';
+              let inNav = false; try { inNav = !!(el.closest && el.closest('nav,[role="navigation"],[role="list"],[role="listbox"],header,footer')); } catch (e) {}
+              const block = !isControl && !el.isContentEditable && !inNav && controls < 3;
+              let box; try { box = el.getBoundingClientRect(); } catch (e) { box = { top: 0, height: 0 }; }
+              items.push({
+                tag: tag,
+                role: (el.getAttribute && el.getAttribute('role')) || '-',
+                testid: (el.getAttribute && (el.getAttribute('data-testid') || el.getAttribute('data-test-id'))) || '-',
+                top: box.top | 0,
+                h: box.height | 0,
+                len: t.length,
+                controls: controls,
+                block: block,
+                fresh: !before.has(t),
+                text: t.slice(0, 160),
+              });
+            }
+            return items;
+          };
+
+          const box = composer();
+          if (!box) { return { error: 'no composer found', composer: false, url: location.href, items: record(new Set()) }; }
+
+          const beforeItems = record(new Set());
+          const before = new Set(beforeItems.map(i => i.text.length >= 160 ? i.text : norm(i.text)));
+
+          // Send the question the same way the real run does.
+          box.focus();
+          if (box.isContentEditable) {
+            try { document.execCommand('selectAll', false, null); } catch (e) {}
+            if (!(() => { try { return document.execCommand('insertText', false, q1); } catch (e) { return false; } })()) box.textContent = q1;
+          } else {
+            const proto = box.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+            Object.getOwnPropertyDescriptor(proto, 'value').set.call(box, q1);
+          }
+          box.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: q1 }));
+          await sleep(600);
+          for (const n of ['keydown','keypress','keyup']) box.dispatchEvent(new KeyboardEvent(n, { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true }));
+          await sleep(1800);
+
+          const grew = () => record(before).some(i => i.fresh && i.len > q1.length + 4);
+          if (!grew()) {
+            const btn = deep().filter(b => {
+              if (b.tagName !== 'BUTTON' && !(b.getAttribute && b.getAttribute('role') === 'button')) return false;
+              if (!visible(b) || b.disabled) return false;
+              const l = ((b.getAttribute('aria-label')||'')+' '+(b.title||'')+' '+(b.textContent||'')+' '+(b.getAttribute('data-testid')||'')).toLowerCase();
+              return /send|submit/.test(l);
+            }).pop();
+            if (btn) btn.click();
+          }
+
+          // Give the answer time, then hold still.
+          let steady = ''; let still = 0; const until = Date.now() + 60000;
+          while (Date.now() < until) {
+            await sleep(1200);
+            const now = JSON.stringify(record(before).filter(i => i.fresh).map(i => i.text));
+            if (now === steady) { still++; if (still >= 3) break; } else still = 0;
+            steady = now;
+          }
+
+          return { composer: true, url: location.href, items: record(before) };
+        })()
+        """.Replace("__QUESTION__", asked, StringComparison.Ordinal);
+    }
+
     /// <summary>
     /// True once the browser is somewhere that is the chat itself rather than a step on the way
     /// to it. Sign in bounces through several Microsoft addresses, and every one of them would
@@ -283,6 +500,12 @@ public static class CopilotWeb
               if (tag === 'BUTTON' || tag === 'A' || tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'NAV' || tag === 'LI') continue;
               if (el.isContentEditable) continue;
               try { if (el.closest && el.closest('nav,[role="navigation"],[role="list"],[role="listbox"],header,footer')) continue; } catch (e) {}
+              // A thing made of links and buttons is a sidebar, a toolbar or a row of suggested
+              // prompts, never an answer. An answer is prose and holds no controls of its own.
+              let controls = 0;
+              try { controls = el.querySelectorAll('a,button,[role="button"],[role="link"],[role="tab"],[role="menuitem"],[role="option"]').length; } catch (e) {}
+              if (controls >= 3) continue;
+
               let t;
               try { t = norm(el.innerText); } catch (e) { continue; }
               if (t.length < 2 || t.length > 8000) continue;

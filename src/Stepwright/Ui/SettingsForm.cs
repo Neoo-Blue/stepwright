@@ -723,6 +723,7 @@ public sealed class SettingsForm : Form
 
         row.Controls.Add(Action("Sign in to Copilot", async () => await SignInBrowserAsync().ConfigureAwait(true)));
         row.Controls.Add(Action("Sign out", SignOutBrowser));
+        row.Controls.Add(Action("Save a page report", async () => await SavePageReportAsync().ConfigureAwait(true)));
 
         _aiBrowserGroup.Controls.Add(row);
 
@@ -788,6 +789,61 @@ public sealed class SettingsForm : Form
         {
             _aiResult.ForeColor = Theme.Record;
             _aiResult.Text = StepwrightText.Shorten(error.Message, 220);
+        }
+    }
+
+    /// <summary>
+    /// Writes down everything the Copilot page holds after a question, so the reading of the
+    /// answer can be built against what is really there. The file is opened for the person to
+    /// look at and send on.
+    /// </summary>
+    private async Task SavePageReportAsync()
+    {
+        if (!Web.WebSession.Available)
+        {
+            _aiResult.ForeColor = Theme.Record;
+            _aiResult.Text = Web.WebSession.Missing;
+            return;
+        }
+
+        if (!Web.CopilotWeb.Remembered)
+        {
+            _aiResult.ForeColor = Theme.Record;
+            _aiResult.Text = "Sign in to Copilot first, then save a page report.";
+            return;
+        }
+
+        _aiResult.ForeColor = Theme.Muted;
+        _aiResult.Text = "Asking Copilot, then writing down what the page holds...";
+
+        try
+        {
+            using var cancel = new CancellationTokenSource(TimeSpan.FromMinutes(3));
+
+            string report = await Web.CopilotWeb
+                .DiagnoseAsync(_settings.AiCopilotWork, "Stepwright page report probe. Reply with a short sentence.", cancel.Token)
+                .ConfigureAwait(true);
+
+            Directory.CreateDirectory(AppSettings.SettingsFolder);
+            string path = Path.Combine(AppSettings.SettingsFolder, "copilot-page-report.txt");
+            await File.WriteAllTextAsync(path, report, cancel.Token).ConfigureAwait(true);
+
+            try
+            {
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(path) { UseShellExecute = true });
+            }
+            catch
+            {
+                // Opening it is a convenience; the file is written either way.
+            }
+
+            _aiResult.ForeColor = Theme.Good;
+            _aiResult.Text = "Page report written to " + path + ". Open it and send it over.";
+        }
+        catch (Exception error)
+        {
+            _aiResult.ForeColor = Theme.Record;
+            _aiResult.Text = StepwrightText.Shorten(error.Message, 200);
         }
     }
 
