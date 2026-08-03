@@ -160,15 +160,18 @@ public sealed class AppSettings
 
     public static AppSettings Load()
     {
+        AppSettings settings = new();
+
         try
         {
             if (File.Exists(SettingsPath))
             {
                 string json = File.ReadAllText(SettingsPath);
                 AppSettings? loaded = JsonSerializer.Deserialize<AppSettings>(json, JsonOptions);
+
                 if (loaded is not null)
                 {
-                    return loaded;
+                    settings = loaded;
                 }
             }
         }
@@ -177,7 +180,51 @@ public sealed class AppSettings
             // A damaged settings file should never stop the app from starting.
         }
 
-        return new AppSettings();
+        // What an administrator decided comes last, so it wins over anything in the person's own
+        // file, including a value they had before the policy arrived.
+        settings.ApplyPolicy();
+        return settings;
+    }
+
+    /// <summary>
+    /// Lays the machine's policy over these settings. A locked policy replaces what is there and
+    /// the settings page will not let it be edited. An unlocked one only fills in what the person
+    /// has not set, which is how a company gives a starting point without taking the choice away.
+    /// </summary>
+    public void ApplyPolicy()
+    {
+        Policy policy = Policy.Current;
+
+        if (!policy.Exists)
+        {
+            return;
+        }
+
+        bool Take(string? value, string current) =>
+            !string.IsNullOrWhiteSpace(value) && (policy.Locked || string.IsNullOrWhiteSpace(current));
+
+        if (Take(policy.AiProvider, AiProvider)) { AiProvider = policy.AiProvider!.Trim(); }
+        if (Take(policy.AiAuth, AiAuth)) { AiAuth = policy.AiAuth!.Trim(); }
+        if (Take(policy.AiBaseUrl, AiBaseUrl)) { AiBaseUrl = policy.AiBaseUrl!.Trim(); }
+        if (Take(policy.AiModel, AiModel)) { AiModel = policy.AiModel!.Trim(); }
+        if (Take(policy.AiAppId, AiAppId)) { AiAppId = policy.AiAppId!.Trim(); }
+        if (Take(policy.AiTenant, AiTenant)) { AiTenant = policy.AiTenant!.Trim(); }
+
+        if (Take(policy.HuduBaseUrl, HuduBaseUrl)) { HuduBaseUrl = policy.HuduBaseUrl!.Trim(); }
+        if (Take(policy.HuduPublish, HuduPublish)) { HuduPublish = policy.HuduPublish!.Trim(); }
+        if (Take(policy.ConfluenceSite, ConfluenceSite)) { ConfluenceSite = policy.ConfluenceSite!.Trim(); }
+        if (Take(policy.ConfluenceEmail, ConfluenceEmail)) { ConfluenceEmail = policy.ConfluenceEmail!.Trim(); }
+        if (Take(policy.ConfluenceAuth, ConfluenceAuth)) { ConfluenceAuth = policy.ConfluenceAuth!.Trim(); }
+        if (Take(policy.LibraryFolder, LibraryFolder)) { LibraryFolder = policy.LibraryFolder!.Trim(); }
+
+        // A key from a policy is deliberately not copied into the person's own settings file. It
+        // stays where the administrator put it, and is unsealed only when a request is about to be
+        // made, so it never lands anywhere a person could read it.
+        if (!string.IsNullOrWhiteSpace(policy.AiKeyProtected)) { AiKeyProtected = string.Empty; }
+        if (!string.IsNullOrWhiteSpace(policy.HuduKeyProtected)) { HuduKeyProtected = string.Empty; }
+        if (!string.IsNullOrWhiteSpace(policy.ConfluenceTokenProtected)) { ConfluenceTokenProtected = string.Empty; }
+
+        AiEnabled = AiEnabled || !string.IsNullOrWhiteSpace(policy.AiKeyProtected);
     }
 
     public void Save()
@@ -238,7 +285,14 @@ public sealed class AppSettings
 
     public void SetAiKey(string plainKey) => AiKeyProtected = Protect(plainKey);
 
-    public string GetAiKey() => Reveal(AiKeyProtected);
+    /// <summary>
+    /// The key to use. A key an administrator sealed into the machine's policy is preferred and
+    /// is unsealed only here, at the moment it is needed, so it never sits in the person's own
+    /// settings file and is never handed to the settings page to display.
+    /// </summary>
+    public string GetAiKey() => Policy.Current.AiKeyProtected is { Length: > 0 } sealedKey
+        ? Policy.Reveal(sealedKey)
+        : Reveal(AiKeyProtected);
 
     public void SetAiToken(string plainToken) => AiTokenProtected = Protect(plainToken);
 
@@ -351,11 +405,15 @@ public sealed class AppSettings
 
     public void SetHuduKey(string plainKey) => HuduKeyProtected = Protect(plainKey);
 
-    public string GetHuduKey() => Reveal(HuduKeyProtected);
+    public string GetHuduKey() => Policy.Current.HuduKeyProtected is { Length: > 0 } sealedKey
+        ? Policy.Reveal(sealedKey)
+        : Reveal(HuduKeyProtected);
 
     public void SetConfluenceToken(string plainToken) => ConfluenceTokenProtected = Protect(plainToken);
 
-    public string GetConfluenceToken() => Reveal(ConfluenceTokenProtected);
+    public string GetConfluenceToken() => Policy.Current.ConfluenceTokenProtected is { Length: > 0 } sealedToken
+        ? Policy.Reveal(sealedToken)
+        : Reveal(ConfluenceTokenProtected);
 
     public void SetConfluenceSecret(string plainSecret) => ConfluenceClientSecretProtected = Protect(plainSecret);
 
@@ -390,7 +448,8 @@ public sealed class AppSettings
     }
 
     [JsonIgnore]
-    public bool HasAiKey => !string.IsNullOrEmpty(AiKeyProtected);
+    public bool HasAiKey =>
+        !string.IsNullOrEmpty(AiKeyProtected) || !string.IsNullOrEmpty(Policy.Current.AiKeyProtected);
 
     [JsonIgnore]
     public bool HasAiToken => !string.IsNullOrEmpty(AiTokenProtected);
@@ -408,7 +467,8 @@ public sealed class AppSettings
     };
 
     [JsonIgnore]
-    public bool HasHudu => !string.IsNullOrWhiteSpace(HuduBaseUrl) && !string.IsNullOrEmpty(HuduKeyProtected);
+    public bool HasHudu => !string.IsNullOrWhiteSpace(HuduBaseUrl)
+        && (!string.IsNullOrEmpty(HuduKeyProtected) || !string.IsNullOrEmpty(Policy.Current.HuduKeyProtected));
 
     /// <summary>True when Hudu is set to publish by driving its web page rather than by the key.</summary>
     [JsonIgnore]

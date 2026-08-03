@@ -618,3 +618,31 @@ ships and produce real output on any machine, which is how they were checked: th
 parsed by a reader and rendered to images, the animation decoded frame by frame with its
 durations, its looping marker and its colours compared against the source. The build repeats
 both checks on every push, the document one against the real Windows fonts a person will get.
+
+## Handing it to a company
+
+One script sets Stepwright up for every person on a machine: which assistant, which keys, where
+guides go. Run it as an administrator, through Intune, an RMM or by hand:
+
+```powershell
+.\deploy\Set-StepwrightPolicy.ps1 -SetBy "Contoso IT" -AiProvider openai -AiKey "sk-..." `
+    -HuduBaseUrl "https://help.contoso.com" -HuduKey "abcd..."
+```
+
+Everything you set is filled in for every technician and, unless you pass `-Unlocked`, greyed out
+and not theirs to change. A key you seal is used but never shown: the box says who set it, and it
+is never copied into the person's own settings file.
+
+Sealing binds the key to that machine, so the file is worth nothing copied elsewhere. It is not
+armour against somebody with administrator rights on their own machine who sets out to pull the
+key from a running program, and no application that leaves a usable key on a machine can be. Where
+that matters, set an assistant people sign in to themselves and put no key anywhere at all. See
+[deploy/README.md](deploy/README.md).
+
+## Licence
+
+Stepwright is free for noncommercial use under the PolyForm Noncommercial License 1.0.0.
+
+Using it in the course of running a business is commercial use and needs permission first, which
+is often given freely. Write to aierfate.aierken@gmail.com with who you are, what you would use it
+for, and roughly how many people would use it. See [LICENSE](LICENSE).

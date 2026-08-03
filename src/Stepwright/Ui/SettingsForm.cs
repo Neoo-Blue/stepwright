@@ -76,6 +76,7 @@ public sealed class SettingsForm : Form
     private readonly TextBox _huduKey = new();
     private readonly ComboBox _huduPublish = new();
     private readonly Label _huduWebNote = new();
+    private readonly Label _policyNote = new();
     private readonly Label _huduResult = new();
     private readonly ComboBox _confluenceAuth = new();
     private readonly TextBox _confluenceSite = new();
@@ -142,7 +143,76 @@ public sealed class SettingsForm : Form
             ReloadAuthChoices(_settings.AiAuth);
             ShowProviderHint();
             ShowConfluenceRoute();
+            ApplyPolicy();
         };
+    }
+
+    /// <summary>
+    /// Puts the page under whatever an administrator decided for this machine. A setting that is
+    /// fixed is shown, greyed, and said to be theirs rather than the person's, which is kinder
+    /// than a box that takes an edit and quietly throws it away. A key they sealed is not shown at
+    /// all, because it is not in this app to show.
+    /// </summary>
+    private void ApplyPolicy()
+    {
+        Policy policy = Policy.Current;
+
+        if (!policy.Exists)
+        {
+            return;
+        }
+
+        string who = policy.Who;
+
+        void Fix(Control control, string? value)
+        {
+            if (policy.Fixed(value))
+            {
+                control.Enabled = false;
+            }
+        }
+
+        Fix(_aiProvider, policy.AiProvider);
+        Fix(_aiAuth, policy.AiAuth);
+        Fix(_aiBaseUrl, policy.AiBaseUrl);
+        Fix(_aiModel, policy.AiModel);
+        Fix(_aiAppId, policy.AiAppId);
+        Fix(_aiTenant, policy.AiTenant);
+        Fix(_huduUrl, policy.HuduBaseUrl);
+        Fix(_huduPublish, policy.HuduPublish);
+        Fix(_confluenceSite, policy.ConfluenceSite);
+        Fix(_confluenceEmail, policy.ConfluenceEmail);
+
+        // A sealed key is never handed to a box, not even as stars, because stars in a box are
+        // one careless change away from being replaced and one clever one away from being read.
+        if (!string.IsNullOrWhiteSpace(policy.AiKeyProtected))
+        {
+            _aiKey.Enabled = false;
+            _aiKey.UseSystemPasswordChar = false;
+            _aiKey.Text = "Set by " + who + ", and not shown here";
+        }
+
+        if (!string.IsNullOrWhiteSpace(policy.HuduKeyProtected))
+        {
+            _huduKey.Enabled = false;
+            _huduKey.UseSystemPasswordChar = false;
+            _huduKey.Text = "Set by " + who + ", and not shown here";
+        }
+
+        if (!string.IsNullOrWhiteSpace(policy.ConfluenceToken()))
+        {
+            _confluenceToken.Enabled = false;
+            _confluenceToken.UseSystemPasswordChar = false;
+            _confluenceToken.Text = "Set by " + who + ", and not shown here";
+        }
+
+        _policyNote.Text = policy.Locked
+            ? "Some of these settings were set for this machine by " + who + ". They are filled in"
+              + " and cannot be changed here. Any key set that way is used but never shown, and is"
+              + " not kept in your own settings file."
+            : who + " filled some of these in for you as a starting point. You may change them.";
+
+        _policyNote.Visible = true;
     }
 
     private Control BuildFooter()
@@ -154,6 +224,18 @@ public sealed class SettingsForm : Form
             BackColor = Theme.Panel,
             Padding = new Padding(16, 13, 16, 13),
         };
+
+        // Said along the bottom rather than on one page, because a policy reaches several pages
+        // and a person who lands on the wrong one should still know why a box will not take an edit.
+        _policyNote.Dock = DockStyle.Bottom;
+        _policyNote.AutoSize = false;
+        _policyNote.Height = 34;
+        _policyNote.ForeColor = Theme.Muted;
+        _policyNote.Font = Theme.UiSmall;
+        _policyNote.Padding = new Padding(16, 2, 16, 2);
+        _policyNote.BackColor = Theme.Panel;
+        _policyNote.Visible = false;
+        Controls.Add(_policyNote);
 
         var row = new FlowLayoutPanel
         {
@@ -2231,6 +2313,13 @@ public sealed class SettingsForm : Form
     private void Commit()
     {
         _settings.Author = _author.Text.Trim();
+
+        // A key box that is under policy holds a sentence saying so, not a key, and a disabled box
+        // cannot have been edited. Guarding here as well means a policy that arrives while the
+        // window is open still cannot be written over by a save.
+        if (!string.IsNullOrWhiteSpace(Policy.Current.AiKeyProtected)) { _keyEdited = false; }
+        if (!string.IsNullOrWhiteSpace(Policy.Current.HuduKeyProtected)) { _huduKeyEdited = false; }
+        if (!string.IsNullOrWhiteSpace(Policy.Current.ConfluenceToken())) { _confluenceTokenEdited = false; }
         _settings.CountdownSeconds = (int)_countdown.Value;
         _settings.TypingMergeMilliseconds = (int)_typingMerge.Value;
         _settings.CaptureAllMonitors = _allMonitors.Checked;
